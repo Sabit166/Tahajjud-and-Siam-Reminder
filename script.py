@@ -22,8 +22,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 import pytz
 import os
 from dotenv import load_dotenv
@@ -232,6 +230,18 @@ async def send_weekly_report(bot: Bot):
     )
     log.info("Sent weekly report.")
 
+
+async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_checkin(context.bot, context.job.data)
+
+
+async def send_tahajjud_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_tahajjud_alert(context.bot)
+
+
+async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_weekly_report(context.bot)
+
 # ============================================================
 #  BUTTON PRESS HANDLER
 #  Runs when a member taps Yes or No on any check-in message.
@@ -285,43 +295,59 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 def setup_scheduler(app: Application):
-    scheduler = AsyncIOScheduler(timezone=BD_TZ)
-    bot = app.bot
+    job_queue = app.job_queue
+
+    if job_queue is None:
+        raise RuntimeError(
+            "JobQueue is not available. Install python-telegram-bot with job-queue support."
+        )
 
     # Morning adhkar — 6:30 AM every day
-    scheduler.add_job(
-        send_checkin, CronTrigger(hour=6, minute=30, timezone=BD_TZ),
-        args=[bot, "morning_dhikr"], id="morning_dhikr"
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=6, minute=30, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="morning_dhikr",
+        name="morning_dhikr",
     )
 
     # Ishraq salat — 7:30 AM every day
-    scheduler.add_job(
-        send_checkin, CronTrigger(hour=7, minute=30, timezone=BD_TZ),
-        args=[bot, "ishraq_salat"], id="ishraq_salat"
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=7, minute=30, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="ishraq_salat",
+        name="ishraq_salat",
     )
 
     # Evening adhkar — 5:30 PM every day
-    scheduler.add_job(
-        send_checkin, CronTrigger(hour=17, minute=30, timezone=BD_TZ),
-        args=[bot, "evening_dhikr"], id="evening_dhikr"
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=17, minute=30, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="evening_dhikr",
+        name="evening_dhikr",
     )
 
     # Tahajjud alert — 3:30 AM on Friday & Saturday nights
-    # (In BD, the weekend is Friday-Saturday)
-    scheduler.add_job(
-        send_tahajjud_alert, CronTrigger(day_of_week="fri,sat", hour=3, minute=30, timezone=BD_TZ),
-        args=[bot], id="tahajjud"
+    # (In Python/Telegram JobQueue, Monday=0 so Friday=4 and Saturday=5)
+    job_queue.run_daily(
+        send_tahajjud_job,
+        time=datetime.time(hour=3, minute=30, tzinfo=BD_TZ),
+        days=(4, 5),
+        name="tahajjud",
     )
 
     # Weekly report — every Friday at 9:00 AM
-    scheduler.add_job(
-        send_weekly_report, CronTrigger(day_of_week="fri", hour=9, minute=0, timezone=BD_TZ),
-        args=[bot], id="weekly_report"
+    job_queue.run_daily(
+        send_weekly_report_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=BD_TZ),
+        days=(4,),
+        name="weekly_report",
     )
 
-    scheduler.start()
     log.info("Scheduler started. All jobs are active.")
-    return scheduler
+    return job_queue
 
 # ============================================================
 #  MAIN — starts everything

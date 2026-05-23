@@ -101,3 +101,35 @@ The `restart: unless-stopped` setting in `docker-compose.yml` makes Docker bring
 - You do not need to open any public application port for this bot because it uses Telegram polling.
 - Only SSH access is required for administration.
 - The SQLite database is persisted in the `data` folder mounted into the container.
+
+## Deploy on Railway
+
+Railway can run this bot from the included `Dockerfile`, but there is one important detail: the bot uses SQLite, so you need persistent storage for `DB_PATH` or your database can be lost on redeploys.
+
+### Recommended setup
+
+1. Push this project to GitHub if it is not already there.
+2. In Railway, create a new project and choose **Deploy from GitHub repo**.
+3. Select this repository.
+4. Railway should detect the `Dockerfile` automatically.
+5. Add the following environment variables in the Railway service settings:
+
+```env
+BOT_TOKEN=your_telegram_bot_token
+GROUP_CHAT_ID=-1001234567890
+BD_TZ=Asia/Dhaka
+DB_PATH=/data/dhikr_records.db
+```
+
+6. If Railway offers a persistent volume for your plan, mount it at `/data` so the SQLite file survives restarts.
+7. Deploy the service.
+
+### If Railway volume support is not available
+
+Use Railway PostgreSQL instead of SQLite, or move to a host that supports persistent disk. Without persistent storage, the bot will still run, but your check-in history can disappear when Railway recreates the container.
+
+### What to expect
+
+- The bot does not need an exposed web port because it uses Telegram polling.
+- Railway only needs to run the container continuously.
+- `restart: unless-stopped` is useful on Docker hosts, but Railway manages restarts for you.
