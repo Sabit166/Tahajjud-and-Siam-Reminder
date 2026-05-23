@@ -323,7 +323,7 @@ def setup_scheduler(app: Application):
     # Evening adhkar — 5:30 PM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=17, minute=30, tzinfo=BD_TZ),
+        time=datetime.time(hour=17, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="evening_dhikr",
         name="evening_dhikr",
