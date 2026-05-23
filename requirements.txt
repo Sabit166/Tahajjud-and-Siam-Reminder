@@ -1,0 +1,7 @@
+python-telegram-bot>=20.0
+apscheduler>=3.11
+pytz>=2023.3
+python-dotenv>=1.0.0
+
+# Optional / helpful for running in production
+# gunicorn (if running inside a WSGI container) or other process managers are not required for this script.
