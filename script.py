@@ -36,6 +36,7 @@ TOKEN = os.getenv("BOT_TOKEN", "")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
 DB_PATH = os.getenv("DB_PATH", "dhikr_records.db")
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
+RESPONSE_WINDOW_HOURS = int(os.getenv("RESPONSE_WINDOW_HOURS", "24"))
 
 # ============================================================
 #  TIMEZONE — Bangladesh Standard Time (UTC+6)
@@ -151,7 +152,7 @@ def make_checkin_keyboard(practice_key):
 #  SCHEDULED MESSAGE SENDERS
 # ============================================================
 
-async def send_checkin(bot: Bot, practice_key: str):
+async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     p = PRACTICES[practice_key]
     text = (
         f"{p['emoji']}  *{p['label']}*  |  {p['arabic']}\n\n"
@@ -159,16 +160,19 @@ async def send_checkin(bot: Bot, practice_key: str):
         f"Tap a button below to record your response. "
         f"Your answer is saved to the weekly tracker. 📊"
     )
-    await bot.send_message(
+    sent_message = await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
         parse_mode="Markdown",
         reply_markup=make_checkin_keyboard(practice_key)
     )
+    if RESPONSE_WINDOW_HOURS > 0:
+        log.info(f"Check-in for {p['label']} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_reminder_close(job_queue, sent_message, p['label'])
     log.info(f"Sent check-in: {p['label']}")
 
 
-async def send_tahajjud_alert(bot: Bot):
+async def send_tahajjud_alert(bot: Bot, job_queue=None):
     text = (
         "🌙  *Tahajjud Time!*  |  وقت التهجد\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -181,12 +185,15 @@ async def send_tahajjud_alert(bot: Bot):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "After praying, come back and mark your attendance below 👇"
     )
-    await bot.send_message(
+    sent_message = await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
         parse_mode="Markdown",
         reply_markup=make_checkin_keyboard("tahajjud")
     )
+    if RESPONSE_WINDOW_HOURS > 0:
+        log.info(f"Tahajjud alert will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_reminder_close(job_queue, sent_message, "tahajjud")
     log.info("Sent tahajjud alert.")
 
 
@@ -232,15 +239,44 @@ async def send_weekly_report(bot: Bot):
 
 
 async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_checkin(context.bot, context.job.data)
+    await send_checkin(context.bot, context.job.data, context.job_queue)
 
 
 async def send_tahajjud_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_tahajjud_alert(context.bot)
+    await send_tahajjud_alert(context.bot, context.job_queue)
 
 
 async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
+
+
+async def close_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    message = context.job.data
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=message["chat_id"],
+            message_id=message["message_id"],
+            reply_markup=None,
+        )
+        log.info(f"Closed reminder: {message.get('label', 'unknown')}")
+    except Exception as exc:
+        log.warning(f"Could not close reminder {message.get('label', 'unknown')}: {exc}")
+
+
+def schedule_reminder_close(job_queue, sent_message, label):
+    if job_queue is None or RESPONSE_WINDOW_HOURS <= 0:
+        return
+
+    job_queue.run_once(
+        close_reminder_job,
+        when=datetime.timedelta(hours=RESPONSE_WINDOW_HOURS),
+        data={
+            "chat_id": sent_message.chat_id,
+            "message_id": sent_message.message_id,
+            "label": label,
+        },
+        name=f"close_{label}_{sent_message.message_id}",
+    )
 
 # ============================================================
 #  BUTTON PRESS HANDLER
@@ -273,7 +309,6 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         reply = f"📝 Noted, *{full_name}*. Don't worry — there is still time! May Allah make it easy for you. 💪"
 
-    await query.edit_message_reply_markup(reply_markup=None)
     await context.bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=reply,
