@@ -13,18 +13,36 @@
 # ============================================================
 
 import logging
+import importlib
 import sqlite3
 import datetime
 from pathlib import Path
+from typing import Any, cast
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     ContextTypes,
+    PollAnswerHandler,
 )
 import pytz
 import os
-from dotenv import load_dotenv
+
+try:
+    load_dotenv = importlib.import_module("dotenv").load_dotenv
+except ImportError:
+    def load_dotenv() -> None:
+        env_path = Path(".env")
+        if not env_path.exists():
+            return
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 # ============================================================
 #  YOUR SETTINGS — EDIT THESE TWO LINES
@@ -138,7 +156,19 @@ PRACTICES = {
     "ishraq_salat":   {"label": "Ishraq Salat",    "emoji": "☀️", "arabic": "صلاة الإشراق"},
     "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
     "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد"},
+    "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
+    "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "Nightly Amal"},
+    "nightly_as_sajdah": {"label": "Surat As-Sajdah", "emoji": "📖", "arabic": "Nightly Amal"},
+    "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "emoji": "📖", "arabic": "Nightly Amal"},
+    "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "emoji": "📿", "arabic": "Nightly Amal"},
 }
+
+NIGHTLY_AMAL_OPTIONS = [
+    "nightly_al_mulk",
+    "nightly_as_sajdah",
+    "nightly_al_baqarah_last_2",
+    "nightly_33_tasbeeh",
+]
 
 def make_checkin_keyboard(practice_key):
     return InlineKeyboardMarkup([
@@ -197,6 +227,21 @@ async def send_tahajjud_alert(bot: Bot, job_queue=None):
     log.info("Sent tahajjud alert.")
 
 
+async def send_nightly_amal(bot: Bot, job_queue=None):
+    options = [PRACTICES[key]["label"] for key in NIGHTLY_AMAL_OPTIONS]
+    sent_message = await bot.send_poll(
+        chat_id=GROUP_CHAT_ID,
+        question="🌙 Nightly Amal - select all that you completed tonight",
+        options=options,
+        is_anonymous=False,
+        allows_multiple_answers=True,
+    )
+    if RESPONSE_WINDOW_HOURS > 0:
+        log.info(f"Nightly Amal poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_poll_close(job_queue, sent_message, "Nightly Amal")
+    log.info("Sent Nightly Amal poll.")
+
+
 async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()
 
@@ -239,11 +284,18 @@ async def send_weekly_report(bot: Bot):
 
 
 async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_checkin(context.bot, context.job.data, context.job_queue)
+    job = context.job
+    if job is None:
+        return
+    await send_checkin(context.bot, cast(str, job.data), context.job_queue)
 
 
 async def send_tahajjud_job(context: ContextTypes.DEFAULT_TYPE):
     await send_tahajjud_alert(context.bot, context.job_queue)
+
+
+async def send_nightly_amal_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_nightly_amal(context.bot, context.job_queue)
 
 
 async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
@@ -251,7 +303,10 @@ async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def close_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    message = context.job.data
+    job = context.job
+    if job is None:
+        return
+    message = cast(dict[str, Any], job.data)
     try:
         await context.bot.edit_message_reply_markup(
             chat_id=message["chat_id"],
@@ -261,6 +316,43 @@ async def close_reminder_job(context: ContextTypes.DEFAULT_TYPE):
         log.info(f"Closed reminder: {message.get('label', 'unknown')}")
     except Exception as exc:
         log.warning(f"Could not close reminder {message.get('label', 'unknown')}: {exc}")
+
+
+async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    if job is None:
+        return
+    message = cast(dict[str, Any], job.data)
+    try:
+        await context.bot.stop_poll(
+            chat_id=message["chat_id"],
+            message_id=message["message_id"],
+        )
+
+        today = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT COUNT(*)
+            FROM responses
+            WHERE practice LIKE ? AND date=?
+            """,
+            ("nightly_%", today),
+        )
+        response_count = c.fetchone()[0]
+        conn.close()
+
+        if response_count == 0:
+            save_response(0, "", "Nightly Amal", "nightly_amal", 0)
+            await context.bot.send_message(
+                chat_id=message["chat_id"],
+                text="📝 Nightly Amal was missed tonight.",
+            )
+
+        log.info(f"Closed poll: {message.get('label', 'unknown')}")
+    except Exception as exc:
+        log.warning(f"Could not close poll {message.get('label', 'unknown')}: {exc}")
 
 
 def schedule_reminder_close(job_queue, sent_message, label):
@@ -278,6 +370,22 @@ def schedule_reminder_close(job_queue, sent_message, label):
         name=f"close_{label}_{sent_message.message_id}",
     )
 
+
+def schedule_poll_close(job_queue, sent_message, label):
+    if job_queue is None or RESPONSE_WINDOW_HOURS <= 0:
+        return
+
+    job_queue.run_once(
+        close_poll_job,
+        when=datetime.timedelta(hours=RESPONSE_WINDOW_HOURS),
+        data={
+            "chat_id": sent_message.chat_id,
+            "message_id": sent_message.message_id,
+            "label": label,
+        },
+        name=f"close_poll_{label}_{sent_message.message_id}",
+    )
+
 # ============================================================
 #  BUTTON PRESS HANDLER
 #  Runs when a member taps Yes or No on any check-in message.
@@ -285,8 +393,12 @@ def schedule_reminder_close(job_queue, sent_message, label):
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query    = update.callback_query
+    if query is None:
+        return
     user     = query.from_user
-    data     = query.data   # e.g. "yes_morning_dhikr" or "no_ishraq_salat"
+    if user is None or query.data is None:
+        return
+    data     = cast(str, query.data)   # e.g. "yes_morning_dhikr" or "no_ishraq_salat"
 
     await query.answer()    # removes the loading spinner on the button
 
@@ -314,6 +426,33 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=reply,
         parse_mode="Markdown"
     )
+
+
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = update.poll_answer
+    if answer is None:
+        return
+    user = answer.user
+    if user is None:
+        return
+
+    full_name = user.full_name or user.username or str(user.id)
+    username = user.username or ""
+    selected_options = [NIGHTLY_AMAL_OPTIONS[index] for index in answer.option_ids]
+
+    for practice_key in selected_options:
+        save_response(user.id, username, full_name, practice_key, 1)
+
+    labels = [PRACTICES[key]["label"] for key in selected_options if key in PRACTICES]
+    if labels:
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=(
+                f"✅ Jazakallahu Khayran, *{full_name}*!\n"
+                f"Recorded: {', '.join(labels)}"
+            ),
+            parse_mode="Markdown",
+        )
 
 # ============================================================
 #  SCHEDULER — sets up all timed jobs
@@ -381,6 +520,14 @@ def setup_scheduler(app: Application):
         name="weekly_report",
     )
 
+    # Nightly Amal — 10:30 PM every day
+    job_queue.run_daily(
+        send_nightly_amal_job,
+        time=datetime.time(hour=22, minute=00, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        name="nightly_amal",
+    )
+
     log.info("Scheduler started. All jobs are active.")
     return job_queue
 
@@ -408,6 +555,9 @@ def main():
 
     # Register button handler
     app.add_handler(CallbackQueryHandler(handle_button))
+
+    # Register poll answer handler
+    app.add_handler(PollAnswerHandler(handle_poll_answer))
 
     # Setup scheduler
     setup_scheduler(app)
