@@ -55,6 +55,7 @@ GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
 DB_PATH = os.getenv("DB_PATH", "dhikr_records.db")
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
 RESPONSE_WINDOW_HOURS = int(os.getenv("RESPONSE_WINDOW_HOURS", "24"))
+RESPONSE_DELETE_AFTER_MINUTES = int(os.getenv("RESPONSE_DELETE_AFTER_MINUTES", "10"))
 
 # ============================================================
 #  TIMEZONE — Bangladesh Standard Time (UTC+6)
@@ -283,6 +284,21 @@ async def send_weekly_report(bot: Bot):
     log.info("Sent weekly report.")
 
 
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    if job is None:
+        return
+    message = cast(dict[str, Any], job.data)
+    try:
+        await context.bot.delete_message(
+            chat_id=message["chat_id"],
+            message_id=message["message_id"],
+        )
+        log.info(f"Deleted message: {message.get('label', 'unknown')}")
+    except Exception as exc:
+        log.warning(f"Could not delete message {message.get('label', 'unknown')}: {exc}")
+
+
 async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     if job is None:
@@ -345,10 +361,11 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
 
         if response_count == 0:
             save_response(0, "", "Nightly Amal", "nightly_amal", 0)
-            await context.bot.send_message(
+            missed_message = await context.bot.send_message(
                 chat_id=message["chat_id"],
                 text="📝 Nightly Amal was missed tonight.",
             )
+            schedule_message_delete(context.job_queue, missed_message, "nightly_amal_missed")
 
         log.info(f"Closed poll: {message.get('label', 'unknown')}")
     except Exception as exc:
@@ -386,6 +403,22 @@ def schedule_poll_close(job_queue, sent_message, label):
         name=f"close_poll_{label}_{sent_message.message_id}",
     )
 
+
+def schedule_message_delete(job_queue, sent_message, label):
+    if job_queue is None or RESPONSE_DELETE_AFTER_MINUTES <= 0:
+        return
+
+    job_queue.run_once(
+        delete_message_job,
+        when=datetime.timedelta(minutes=RESPONSE_DELETE_AFTER_MINUTES),
+        data={
+            "chat_id": sent_message.chat_id,
+            "message_id": sent_message.message_id,
+            "label": label,
+        },
+        name=f"delete_{label}_{sent_message.message_id}",
+    )
+
 # ============================================================
 #  BUTTON PRESS HANDLER
 #  Runs when a member taps Yes or No on any check-in message.
@@ -421,11 +454,12 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         reply = f"📝 Noted, *{full_name}*. Don't worry — there is still time! May Allah make it easy for you. 💪"
 
-    await context.bot.send_message(
+    response_message = await context.bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=reply,
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
+    schedule_message_delete(context.job_queue, response_message, f"button_reply_{practice}")
 
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -445,7 +479,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     labels = [PRACTICES[key]["label"] for key in selected_options if key in PRACTICES]
     if labels:
-        await context.bot.send_message(
+        response_message = await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text=(
                 f"✅ Jazakallahu Khayran, *{full_name}*!\n"
@@ -453,6 +487,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ),
             parse_mode="Markdown",
         )
+        schedule_message_delete(context.job_queue, response_message, "nightly_amal_reply")
 
 # ============================================================
 #  SCHEDULER — sets up all timed jobs
