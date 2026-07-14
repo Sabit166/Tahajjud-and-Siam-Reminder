@@ -157,6 +157,8 @@ PRACTICES = {
     "ishraq_salat":   {"label": "Fazr Salat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
     "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
     "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله"},
+    "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام"},
+    "surah_kahf":     {"label": "Surah Kahf",      "emoji": "📖", "arabic": "سورة الكهف"},
     "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد"},
     "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
     "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "Nightly Amal"},
@@ -233,7 +235,7 @@ async def send_nightly_amal(bot: Bot, job_queue=None):
     options = [PRACTICES[key]["label"] for key in NIGHTLY_AMAL_OPTIONS]
     sent_message = await bot.send_poll(
         chat_id=GROUP_CHAT_ID,
-        question="🌙 Nightly Amal - select all that you completed tonight",
+        question="🌙 Nightly Amal - fill your night with Barakah!",
         options=options,
         is_anonymous=False,
         allows_multiple_answers=True,
@@ -258,6 +260,9 @@ async def send_weekly_report(bot: Bot):
     # Build report text
     report = "📊  *Weekly Dhikr & Salat Report*\n"
     report += f"_{datetime.datetime.now(BD_TZ).strftime('%d %B %Y')}_\n"
+    report += "\n*Al-Quran 17:14*\n"
+    report += "ٱقْرَأْ كِتَٰبَكَ كَفَىٰ بِنَفْسِكَ ٱلْيَوْمَ عَلَيْكَ حَسِيبًا\n"
+    report += "_Read! You yourself are sufficient as an accountant on yourself_\n"
     report += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     current_name = None
@@ -364,7 +369,7 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
             save_response(0, "", "Nightly Amal", "nightly_amal", 0)
             missed_message = await context.bot.send_message(
                 chat_id=message["chat_id"],
-                text="📝 Nightly Amal was missed tonight.",
+                text="📝 Nightly Amal was missed tonight. Nightly Amal fills your night and sleep with Barakah. Try not to miss it again! 🌙",
             )
             schedule_message_delete(context.job_queue, missed_message, "nightly_amal_missed")
 
@@ -548,11 +553,29 @@ def setup_scheduler(app: Application):
         name="salawat_on_rasulullah",
     )
 
+    # Sawm — 4:00 AM on Monday and Thursday
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=4, minute=0, tzinfo=BD_TZ),
+        days=(0, 3),
+        data="sawm",
+        name="sawm",
+    )
+
+    # Surah Kahf — 9:00 AM on Friday
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=BD_TZ),
+        days=(4,),
+        data="surah_kahf",
+        name="surah_kahf",
+    )
+
     # Tahajjud alert — 3:30 AM on Friday & Saturday nights
     # (In Python/Telegram JobQueue, Monday=0 so Friday=4 and Saturday=5)
     job_queue.run_daily(
         send_tahajjud_job,
-        time=datetime.time(hour=3, minute=30, tzinfo=BD_TZ),
+        time=datetime.time(hour=3, minute=00, tzinfo=BD_TZ),
         days=(4, 5),
         name="tahajjud",
     )
