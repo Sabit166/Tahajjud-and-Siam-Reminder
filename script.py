@@ -154,7 +154,7 @@ def get_weekly_summary():
 
 PRACTICES = {
     "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية"},
-    "ishraq_salat":   {"label": "Ishraq Salat",    "emoji": "☀️", "arabic": "صلاة الإشراق"},
+    "ishraq_salat":   {"label": "Fazr Salat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
     "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
     "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد"},
     "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
@@ -431,7 +431,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user     = query.from_user
     if user is None or query.data is None:
         return
-    data     = cast(str, query.data)   # e.g. "yes_morning_dhikr" or "no_ishraq_salat"
+    data     = cast(str, query.data)   # e.g. "yes_morning_dhikr" or "no_fazr_salat"
 
     await query.answer()    # removes the loading spinner on the button
 
@@ -497,7 +497,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 #
 #  Current schedule:
 #    Morning adhkar  → 6:30 AM  daily
-#    Ishraq salat    → 7:30 AM  daily
+#    Fazr salat      → 7:30 AM  daily
 #    Evening adhkar  → 5:30 PM  daily
 #    Tahajjud alert  → 3:30 AM  Friday & Saturday nights only
 #    Weekly report   → 9:00 AM  every Friday
@@ -520,7 +520,7 @@ def setup_scheduler(app: Application):
         name="morning_dhikr",
     )
 
-    # Ishraq salat — 7:30 AM every day
+    # Fazr salat — 7:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=7, minute=30, tzinfo=BD_TZ),
