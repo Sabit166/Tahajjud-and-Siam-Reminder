@@ -156,6 +156,7 @@ PRACTICES = {
     "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية"},
     "ishraq_salat":   {"label": "Fazr Salat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
     "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
+    "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله"},
     "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد"},
     "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
     "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "Nightly Amal"},
@@ -450,9 +451,9 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     emoji  = p_info.get("emoji", "")
 
     if did_it:
-        reply = f"✅ Jazakallahu Khayran, *{full_name}*! Your *{label}* has been recorded. {emoji}\nMay Allah accept it from you. 🤲"
+        reply = f"✅ Jazakallahu Khayran, *{full_name}*! Your *{label}* has been recorded. {emoji}\nA small deed with pure intentions bear huge weight before Allah. May Allah accept it from you. 🤲"
     else:
-        reply = f"📝 Noted, *{full_name}*. Don't worry — there is still time! May Allah make it easy for you. 💪"
+        reply = f"📝 Noted, *{full_name}*. You missed *{label}* this time, but don't let this refrain you from other acts of worship! May Allah make it easy for you. 💪"
 
     response_message = await context.bot.send_message(
         chat_id=GROUP_CHAT_ID,
@@ -536,6 +537,15 @@ def setup_scheduler(app: Application):
         days=(0, 1, 2, 3, 4, 5, 6),
         data="evening_dhikr",
         name="evening_dhikr",
+    )
+
+    # Salawat on Rasulullah — 7:00 PM every day
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="salawat_on_rasulullah",
+        name="salawat_on_rasulullah",
     )
 
     # Tahajjud alert — 3:30 AM on Friday & Saturday nights
