@@ -566,7 +566,7 @@ def setup_scheduler(app: Application):
     # Surah Kahf — 7:00 PM on Thursday
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=20, minute=0, tzinfo=BD_TZ),
+        time=datetime.time(hour=19, minute=5, tzinfo=BD_TZ),
         days=(4,),
         data="surah_kahf",
         name="surah_kahf",
