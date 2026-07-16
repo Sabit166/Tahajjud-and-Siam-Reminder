@@ -507,6 +507,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 #    Evening adhkar  → 5:30 PM  daily
 #    Tahajjud alert  → 3:30 AM  Friday & Saturday nights only
 #    Weekly report   → 9:00 AM  every Friday
+#    0 -> 6 : Sunday -> Saturday
 # ============================================================
 
 def setup_scheduler(app: Application):
@@ -557,7 +558,7 @@ def setup_scheduler(app: Application):
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=4, minute=0, tzinfo=BD_TZ),
-        days=(0, 3),
+        days=(1, 4),
         data="sawm",
         name="sawm",
     )
@@ -572,11 +573,11 @@ def setup_scheduler(app: Application):
     )
 
     # Tahajjud alert — 3:30 AM on Friday & Saturday nights
-    # (In Python/Telegram JobQueue, Monday=0 so Friday=4 and Saturday=5)
+    # (In Python/Telegram JobQueue, Monday=1 so Friday=5 and Saturday=6)
     job_queue.run_daily(
         send_tahajjud_job,
         time=datetime.time(hour=3, minute=00, tzinfo=BD_TZ),
-        days=(4, 5),
+        days=(1, 4, 5, 6),
         name="tahajjud",
     )
 
@@ -584,7 +585,7 @@ def setup_scheduler(app: Application):
     job_queue.run_daily(
         send_weekly_report_job,
         time=datetime.time(hour=9, minute=0, tzinfo=BD_TZ),
-        days=(4,),
+        days=(5,),
         name="weekly_report",
     )
 
