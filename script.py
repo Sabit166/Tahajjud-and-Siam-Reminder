@@ -5,7 +5,7 @@
 #
 #  SETUP — fill in these 2 values before running:
 #
-#    TOKEN       : get this from @BotFather on Telegram
+#    BOT_TOKEN       : get this from @BotFather on Telegram
 #    GROUP_CHAT_ID: your group's ID (negative number, e.g. -1001234567890)
 #                  To find it: add @userinfobot to your group,
 #                  it will post the ID automatically, then remove it.
