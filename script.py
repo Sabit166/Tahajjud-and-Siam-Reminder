@@ -584,7 +584,7 @@ def setup_scheduler(app: Application):
     # Weekly report — every Friday at 9:00 AM
     job_queue.run_daily(
         send_weekly_report_job,
-        time=datetime.time(hour=9, minute=0, tzinfo=BD_TZ),
+        time=datetime.time(hour=20, minute=26, tzinfo=BD_TZ),
         days=(5,),
         name="weekly_report",
     )
