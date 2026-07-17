@@ -521,7 +521,7 @@ def setup_scheduler(app: Application):
     # Morning adhkar — 6:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=6, minute=0, tzinfo=BD_TZ),
+        time=datetime.time(hour=6, minute=30, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="morning_dhikr",
         name="morning_dhikr",
@@ -584,7 +584,7 @@ def setup_scheduler(app: Application):
     # Weekly report — every Thursday at 8:50 PM
     job_queue.run_daily(
         send_weekly_report_job,
-        time=datetime.time(hour=22, minute=45, tzinfo=BD_TZ),
+        time=datetime.time(hour=20, minute=50, tzinfo=BD_TZ),
         days=(4,),
         name="weekly_report",
     )
