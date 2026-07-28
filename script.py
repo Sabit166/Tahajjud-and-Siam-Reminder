@@ -23,7 +23,9 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
     PollAnswerHandler,
+    filters,
 )
 import pytz
 import os
@@ -56,6 +58,8 @@ DB_PATH = os.getenv("DB_PATH", "dhikr_records.db")
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
 RESPONSE_WINDOW_HOURS = int(os.getenv("RESPONSE_WINDOW_HOURS", "24"))
 RESPONSE_DELETE_AFTER_MINUTES = int(os.getenv("RESPONSE_DELETE_AFTER_MINUTES", "10"))
+DAILY_REPORT_HOUR = 18
+DAILY_REPORT_MINUTE = 30
 
 # ============================================================
 #  TIMEZONE — Bangladesh Standard Time (UTC+6)
@@ -147,6 +151,54 @@ def get_weekly_summary():
     conn.close()
     return rows
 
+
+def get_daily_summary():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    now = datetime.datetime.now(BD_TZ)
+    report_end = now.replace(
+        hour=DAILY_REPORT_HOUR,
+        minute=DAILY_REPORT_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if now < report_end:
+        report_end -= datetime.timedelta(days=1)
+    report_start = report_end - datetime.timedelta(days=1)
+
+    scheduled_practices = ["evening_dhikr", "salawat_on_rasulullah", "nightly_amal"]
+    if report_start.weekday() == 3:
+        scheduled_practices.append("surah_kahf")
+
+    scheduled_practices.extend(["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat"])
+    if report_end.weekday() in (0, 3):
+        scheduled_practices.append("sawm")
+
+    placeholders = ",".join("?" for _ in scheduled_practices)
+    c.execute(
+        f"""
+        SELECT full_name, practice, did_it
+        FROM responses
+        WHERE recorded_at > ? AND recorded_at <= ? AND practice IN ({placeholders})
+        ORDER BY full_name, practice
+        """,
+        (
+            report_start.strftime("%Y-%m-%d %H:%M:%S"),
+            report_end.strftime("%Y-%m-%d %H:%M:%S"),
+            *scheduled_practices,
+        ),
+    )
+
+    rows = c.fetchall()
+    conn.close()
+
+    summary: dict[str, dict[str, int]] = {}
+    for full_name, practice, did_it in rows:
+        summary.setdefault(full_name, {})[practice] = did_it
+
+    return scheduled_practices, summary
+
 # ============================================================
 #  CHECK-IN MESSAGES
 #  Each practice has its own emoji, label, and callback code.
@@ -154,7 +206,8 @@ def get_weekly_summary():
 
 PRACTICES = {
     "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية"},
-    "ishraq_salat":   {"label": "Fazr Salat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
+    "fazr_jamaat":   {"label": "Fazr Jamaat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
+    "ishraq_salat":   {"label": "Ishraq Salat",      "emoji": "☀️", "arabic": "صلاة الإشراق"},
     "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
     "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله"},
     "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام"},
@@ -172,6 +225,22 @@ NIGHTLY_AMAL_OPTIONS = [
     "nightly_as_sajdah",
     "nightly_al_baqarah_last_2",
     "nightly_33_tasbeeh",
+]
+
+GROUP_AMAL_LABELS = [
+    "Morning Adhkar",
+    "Fazr Jamaat",
+    "Ishraq Salat",
+    "Evening Adhkar",
+    "Salawat on Rasulullah",
+    "Sawm",
+    "Surah Kahf",
+    "Tahajjud Salat",
+    "Nightly Amal",
+    "Surat Al-Mulk",
+    "Surat As-Sajdah",
+    "Surat Al-Baqarah (Last 2 ayats)",
+    "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
 ]
 
 def make_checkin_keyboard(practice_key):
@@ -290,6 +359,44 @@ async def send_weekly_report(bot: Bot):
     log.info("Sent weekly report.")
 
 
+async def send_daily_report(bot: Bot):
+    scheduled_practices, summary = get_daily_summary()
+
+    report = "📊 *Daily Accountability Dashboard*\n\n"
+    report += (
+        "*Hadith*\n"
+        "Aisha reported that the Prophet was asked, \"What deeds are loved most by Allah?\" "
+        "He replied, \"The most regular constant deeds even though they may be few,\" and added, "
+        "\"Do not take upon yourselves, except the deeds which are within your ability.\" "
+        "(Recorded in Sahih al-Bukhari 6465)\n"
+    )
+    report += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    if not summary:
+        report += "No responses recorded today yet.\n"
+    else:
+        for full_name in sorted(summary):
+            report += f"👤 *{full_name}*\n"
+            for practice in scheduled_practices:
+                p_info = PRACTICES.get(practice, {})
+                emoji = p_info.get("emoji", "•")
+                label = p_info.get("label", practice)
+                did_it = summary[full_name].get(practice, 0)
+                status = "✅ Done" if did_it else "❌ Missed"
+                report += f"  {emoji} {label}: {status}\n"
+            report += "\n"
+
+    report += "━━━━━━━━━━━━━━━━━━━━\n"
+    report += "May Allah accept from all of us. آمين 🤲"
+
+    await bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text=report,
+        parse_mode="Markdown"
+    )
+    log.info("Sent daily report.")
+
+
 async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     if job is None:
@@ -322,6 +429,10 @@ async def send_nightly_amal_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
+
+
+async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_daily_report(context.bot)
 
 
 async def close_reminder_job(context: ContextTypes.DEFAULT_TYPE):
@@ -495,6 +606,35 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         schedule_message_delete(context.job_queue, response_message, "nightly_amal_reply")
 
+
+async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if message is None or not message.new_chat_members:
+        return
+
+    for member in message.new_chat_members:
+        if member.is_bot:
+            continue
+
+        display_name = member.full_name or member.username or "brother"
+        welcome_text = (
+            f"Assalamu Alaikum wa Rahmatullahi wa Barakatuh, <b>{display_name}</b> 🤍\n\n"
+            "Welcome to our little circle of remembrance and accountability. May Allah make your stay here beneficial, easy, and full of barakah.\n\n"
+            "Here is the amal we follow together:\n"
+        )
+        for label in GROUP_AMAL_LABELS:
+            welcome_text += f"• {label}\n"
+
+        welcome_text += (
+            "\nWe ask Allah to accept every effort, even the small ones, and to keep our hearts firm upon الخير. آمين."
+        )
+
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text=welcome_text,
+            parse_mode="HTML",
+        )
+
 # ============================================================
 #  SCHEDULER — sets up all timed jobs
 #
@@ -521,7 +661,7 @@ def setup_scheduler(app: Application):
     # Morning adhkar — 6:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=6, minute=30, tzinfo=BD_TZ),
+        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="morning_dhikr",
         name="morning_dhikr",
@@ -530,7 +670,16 @@ def setup_scheduler(app: Application):
     # Fazr salat — 7:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=7, minute=30, tzinfo=BD_TZ),
+        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="fazr_jamaat",
+        name="fazr_jamaat",
+    )
+    
+    # Fazr salat — 7:30 AM every day
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="ishraq_salat",
         name="ishraq_salat",
@@ -539,7 +688,7 @@ def setup_scheduler(app: Application):
     # Evening adhkar — 5:30 PM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=18, minute=40, tzinfo=BD_TZ),
+        time=datetime.time(hour=19, minute=30, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="evening_dhikr",
         name="evening_dhikr",
@@ -566,7 +715,7 @@ def setup_scheduler(app: Application):
     # Surah Kahf — 7:00 PM on Thursday
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=19, minute=5, tzinfo=BD_TZ),
+        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
         days=(4,),
         data="surah_kahf",
         name="surah_kahf",
@@ -577,8 +726,16 @@ def setup_scheduler(app: Application):
     job_queue.run_daily(
         send_tahajjud_job,
         time=datetime.time(hour=3, minute=00, tzinfo=BD_TZ),
-        days=(1, 4, 5, 6),
+        days=(0, 1, 2, 3, 4, 5, 6),
         name="tahajjud",
+    )
+
+    # Daily report — every day at 6:30 PM
+    job_queue.run_daily(
+        send_daily_report_job,
+        time=datetime.time(hour=18, minute=30, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        name="daily_report",
     )
 
     # Weekly report — every Thursday at 8:50 PM
@@ -627,6 +784,9 @@ def main():
 
     # Register poll answer handler
     app.add_handler(PollAnswerHandler(handle_poll_answer))
+
+    # Welcome new members
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
     # Setup scheduler
     setup_scheduler(app)
