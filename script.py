@@ -204,15 +204,17 @@ def get_daily_summary():
 #  Each practice has its own emoji, label, and callback code.
 # ============================================================
 
+ACTIVE_POLLS: dict[str, str] = {}
+
 PRACTICES = {
-    "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية"},
-    "fazr_jamaat":   {"label": "Fazr Jamaat",      "emoji": "☀️", "arabic": "صلاة الفجر"},
-    "ishraq_salat":   {"label": "Ishraq Salat",      "emoji": "☀️", "arabic": "صلاة الإشراق"},
-    "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية"},
-    "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله"},
-    "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام"},
-    "surah_kahf":     {"label": "Surah Kahf",      "emoji": "📖", "arabic": "سورة الكهف"},
-    "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد"},
+    "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "fazr_jamaat":   {"label": "Fazr Jamaat",      "emoji": "☀️", "arabic": "صلاة الفجر", "poll_options": ["Alhamdulillah, done", "Missed Jamaat"]},
+    "ishraq_salat":   {"label": "Ishraq Salat",      "emoji": "☀️", "arabic": "صلاة الإشراق", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام", "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"]},
+    "surah_kahf":     {"label": "Surah Kahf",      "emoji": "📖", "arabic": "سورة الكهف", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد", "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"]},
     "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
     "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "Nightly Amal"},
     "nightly_as_sajdah": {"label": "Surat As-Sajdah", "emoji": "📖", "arabic": "Nightly Amal"},
@@ -257,47 +259,40 @@ def make_checkin_keyboard(practice_key):
 
 async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     p = PRACTICES[practice_key]
-    text = (
-        f"{p['emoji']}  *{p['label']}*  |  {p['arabic']}\n\n"
-        f"Assalamu Alaikum brothers! Did you complete your *{p['label']}* today?\n\n"
-        f"Tap a button below to record your response. "
-        f"Your answer is saved to the weekly tracker. 📊"
-    )
-    sent_message = await bot.send_message(
+    question = f"{p['emoji']} {p['label']} | {p['arabic']}"
+    sent_message = await bot.send_poll(
         chat_id=GROUP_CHAT_ID,
-        text=text,
-        parse_mode="Markdown",
-        reply_markup=make_checkin_keyboard(practice_key)
+        question=question,
+        options=p["poll_options"],
+        is_anonymous=False,
+        allows_multiple_answers=False,
     )
+    if sent_message.poll:
+        ACTIVE_POLLS[sent_message.poll.id] = practice_key
+
     if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Check-in for {p['label']} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_reminder_close(job_queue, sent_message, p['label'])
-    log.info(f"Sent check-in: {p['label']}")
+        log.info(f"Check-in poll for {p['label']} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_poll_close(job_queue, sent_message, p['label'])
+    log.info(f"Sent check-in poll: {p['label']}")
 
 
 async def send_tahajjud_alert(bot: Bot, job_queue=None):
-    text = (
-        "🌙  *Tahajjud Time!*  |  وقت التهجد\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Brothers, it is time for *Tahajjud* prayer! 🤲\n\n"
-        "Rise, make wudu, and stand before Allah in the blessed last third of the night.\n\n"
-        "_\"The Lord descends every night to the lowest heaven when one-third of the night remains "
-        "and says: 'Who will call upon Me so that I may answer? Who will ask of Me so that I may give? "
-        "Who will seek My forgiveness so that I may forgive?'\"_\n"
-        "*(Bukhari & Muslim)*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "After praying, come back and mark your attendance below 👇"
-    )
-    sent_message = await bot.send_message(
+    p = PRACTICES["tahajjud"]
+    question = "🌙 Tahajjud Time! Did you perform Tahajjud today?"
+    sent_message = await bot.send_poll(
         chat_id=GROUP_CHAT_ID,
-        text=text,
-        parse_mode="Markdown",
-        reply_markup=make_checkin_keyboard("tahajjud")
+        question=question,
+        options=p["poll_options"],
+        is_anonymous=False,
+        allows_multiple_answers=False,
     )
+    if sent_message.poll:
+        ACTIVE_POLLS[sent_message.poll.id] = "tahajjud"
+
     if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Tahajjud alert will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_reminder_close(job_queue, sent_message, "tahajjud")
-    log.info("Sent tahajjud alert.")
+        log.info(f"Tahajjud poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_poll_close(job_queue, sent_message, "tahajjud")
+    log.info("Sent tahajjud poll.")
 
 
 async def send_nightly_amal(bot: Bot, job_queue=None):
@@ -309,6 +304,9 @@ async def send_nightly_amal(bot: Bot, job_queue=None):
         is_anonymous=False,
         allows_multiple_answers=True,
     )
+    if sent_message.poll:
+        ACTIVE_POLLS[sent_message.poll.id] = "nightly_amal"
+
     if RESPONSE_WINDOW_HOURS > 0:
         log.info(f"Nightly Amal poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
         schedule_poll_close(job_queue, sent_message, "Nightly Amal")
@@ -589,22 +587,59 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     full_name = user.full_name or user.username or str(user.id)
     username = user.username or ""
-    selected_options = [NIGHTLY_AMAL_OPTIONS[index] for index in answer.option_ids]
+    poll_id = answer.poll_id
 
-    for practice_key in selected_options:
-        save_response(user.id, username, full_name, practice_key, 1)
+    practice_key = ACTIVE_POLLS.get(poll_id)
 
-    labels = [PRACTICES[key]["label"] for key in selected_options if key in PRACTICES]
-    if labels:
+    if practice_key == "nightly_amal" or (practice_key is None and len(answer.option_ids) > 1):
+        selected_options = [NIGHTLY_AMAL_OPTIONS[index] for index in answer.option_ids if index < len(NIGHTLY_AMAL_OPTIONS)]
+        for p_key in selected_options:
+            save_response(user.id, username, full_name, p_key, 1)
+
+        labels = [PRACTICES[p_key]["label"] for p_key in selected_options if p_key in PRACTICES]
+        if labels:
+            response_message = await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=(
+                    f"✅ Jazakallahu Khayran, *{full_name}*!\n"
+                    f"Recorded: {', '.join(labels)}"
+                ),
+                parse_mode="Markdown",
+            )
+            schedule_message_delete(context.job_queue, response_message, "nightly_amal_reply")
+
+    elif practice_key in PRACTICES:
+        p_info = PRACTICES[practice_key]
+        label = p_info.get("label", practice_key)
+        emoji = p_info.get("emoji", "")
+
+        if not answer.option_ids:
+            log.info(f"User {full_name} retracted vote for {label}")
+            return
+
+        did_it = 1 if 0 in answer.option_ids else 0
+        save_response(user.id, username, full_name, practice_key, did_it)
+
+        if did_it:
+            reply = (
+                f"✅ Jazakallahu Khayran, *{full_name}*! Your *{label}* has been recorded. {emoji}\n"
+                f"A small deed with pure intentions bears huge weight before Allah. May Allah accept it from you. 🤲"
+            )
+        else:
+            reply = (
+                f"📝 Noted, *{full_name}*. You recorded *{label}* for today. "
+                f"May Allah make it easy for you and grant you consistency. 💪"
+            )
+
         response_message = await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
-            text=(
-                f"✅ Jazakallahu Khayran, *{full_name}*!\n"
-                f"Recorded: {', '.join(labels)}"
-            ),
+            text=reply,
             parse_mode="Markdown",
         )
-        schedule_message_delete(context.job_queue, response_message, "nightly_amal_reply")
+        schedule_message_delete(context.job_queue, response_message, f"poll_reply_{practice_key}")
+
+    else:
+        log.info(f"Received poll answer from {full_name} for untracked poll ID {poll_id}")
 
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
