@@ -13,11 +13,12 @@
 # ============================================================
 
 import logging
+import asyncio
 import importlib
 import sqlite3
 import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Optional, cast
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -98,9 +99,47 @@ def init_db():
             recorded_at TEXT NOT NULL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS active_polls (
+            poll_id      TEXT PRIMARY KEY,
+            practice_key TEXT NOT NULL,
+            created_at   TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
     log.info("Database ready.")
+
+def save_active_poll(poll_id: str, practice_key: str):
+    ACTIVE_POLLS[poll_id] = practice_key
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        now = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""
+            INSERT OR REPLACE INTO active_polls (poll_id, practice_key, created_at)
+            VALUES (?, ?, ?)
+        """, (poll_id, practice_key, now))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        log.warning(f"Could not save active poll {poll_id}: {exc}")
+
+def get_poll_practice(poll_id: str) -> Optional[str]:
+    if poll_id in ACTIVE_POLLS:
+        return ACTIVE_POLLS[poll_id]
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT practice_key FROM active_polls WHERE poll_id=?", (poll_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            ACTIVE_POLLS[poll_id] = row[0]
+            return row[0]
+    except Exception as exc:
+        log.warning(f"Could not read active poll {poll_id}: {exc}")
+    return None
 
 def save_response(user_id, username, full_name, practice, did_it):
     conn = sqlite3.connect(DB_PATH)
@@ -167,7 +206,14 @@ def get_daily_summary():
         report_end -= datetime.timedelta(days=1)
     report_start = report_end - datetime.timedelta(days=1)
 
-    scheduled_practices = ["evening_dhikr", "salawat_on_rasulullah", "nightly_amal"]
+    scheduled_practices = [
+        "evening_dhikr",
+        "salawat_on_rasulullah",
+        "nightly_al_mulk",
+        "nightly_as_sajdah",
+        "nightly_al_baqarah_last_2",
+        "nightly_33_tasbeeh",
+    ]
     if report_start.weekday() == 3:
         scheduled_practices.append("surah_kahf")
 
@@ -215,11 +261,10 @@ PRACTICES = {
     "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام", "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"]},
     "surah_kahf":     {"label": "Surah Kahf",      "emoji": "📖", "arabic": "سورة الكهف", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
     "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد", "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"]},
-    "nightly_amal":   {"label": "Nightly Amal",    "emoji": "🌙", "arabic": "الأعمال الليلية"},
-    "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "Nightly Amal"},
-    "nightly_as_sajdah": {"label": "Surat As-Sajdah", "emoji": "📖", "arabic": "Nightly Amal"},
-    "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "emoji": "📖", "arabic": "Nightly Amal"},
-    "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "emoji": "📿", "arabic": "Nightly Amal"},
+    "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_as_sajdah": {"label": "Surat As-Sajdah", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "emoji": "📿", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
 }
 
 NIGHTLY_AMAL_OPTIONS = [
@@ -268,7 +313,7 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
         allows_multiple_answers=False,
     )
     if sent_message.poll:
-        ACTIVE_POLLS[sent_message.poll.id] = practice_key
+        save_active_poll(sent_message.poll.id, practice_key)
 
     if RESPONSE_WINDOW_HOURS > 0:
         log.info(f"Check-in poll for {p['label']} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
@@ -287,7 +332,7 @@ async def send_tahajjud_alert(bot: Bot, job_queue=None):
         allows_multiple_answers=False,
     )
     if sent_message.poll:
-        ACTIVE_POLLS[sent_message.poll.id] = "tahajjud"
+        save_active_poll(sent_message.poll.id, "tahajjud")
 
     if RESPONSE_WINDOW_HOURS > 0:
         log.info(f"Tahajjud poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
@@ -296,21 +341,10 @@ async def send_tahajjud_alert(bot: Bot, job_queue=None):
 
 
 async def send_nightly_amal(bot: Bot, job_queue=None):
-    options = [PRACTICES[key]["label"] for key in NIGHTLY_AMAL_OPTIONS]
-    sent_message = await bot.send_poll(
-        chat_id=GROUP_CHAT_ID,
-        question="🌙 Nightly Amal - fill your night with Barakah!",
-        options=options,
-        is_anonymous=False,
-        allows_multiple_answers=True,
-    )
-    if sent_message.poll:
-        ACTIVE_POLLS[sent_message.poll.id] = "nightly_amal"
-
-    if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Nightly Amal poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_poll_close(job_queue, sent_message, "Nightly Amal")
-    log.info("Sent Nightly Amal poll.")
+    for key in NIGHTLY_AMAL_OPTIONS:
+        await send_checkin(bot, key, job_queue)
+        await asyncio.sleep(1)
+    log.info("Sent all 4 Nightly Amal polls.")
 
 
 async def send_weekly_report(bot: Bot):
@@ -459,29 +493,6 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
             chat_id=message["chat_id"],
             message_id=message["message_id"],
         )
-
-        today = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d")
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute(
-            """
-            SELECT COUNT(*)
-            FROM responses
-            WHERE practice LIKE ? AND date=?
-            """,
-            ("nightly_%", today),
-        )
-        response_count = c.fetchone()[0]
-        conn.close()
-
-        if response_count == 0:
-            save_response(0, "", "Nightly Amal", "nightly_amal", 0)
-            missed_message = await context.bot.send_message(
-                chat_id=message["chat_id"],
-                text="📝 Nightly Amal was missed tonight. Nightly Amal fills your night and sleep with Barakah. Try not to miss it again! 🌙",
-            )
-            schedule_message_delete(context.job_queue, missed_message, "nightly_amal_missed")
-
         log.info(f"Closed poll: {message.get('label', 'unknown')}")
     except Exception as exc:
         log.warning(f"Could not close poll {message.get('label', 'unknown')}: {exc}")
@@ -589,26 +600,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     username = user.username or ""
     poll_id = answer.poll_id
 
-    practice_key = ACTIVE_POLLS.get(poll_id)
+    practice_key = get_poll_practice(poll_id)
 
-    if practice_key == "nightly_amal" or (practice_key is None and len(answer.option_ids) > 1):
-        selected_options = [NIGHTLY_AMAL_OPTIONS[index] for index in answer.option_ids if index < len(NIGHTLY_AMAL_OPTIONS)]
-        for p_key in selected_options:
-            save_response(user.id, username, full_name, p_key, 1)
-
-        labels = [PRACTICES[p_key]["label"] for p_key in selected_options if p_key in PRACTICES]
-        if labels:
-            response_message = await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=(
-                    f"✅ Jazakallahu Khayran, *{full_name}*!\n"
-                    f"Recorded: {', '.join(labels)}"
-                ),
-                parse_mode="Markdown",
-            )
-            schedule_message_delete(context.job_queue, response_message, "nightly_amal_reply")
-
-    elif practice_key in PRACTICES:
+    if practice_key in PRACTICES:
         p_info = PRACTICES[practice_key]
         label = p_info.get("label", practice_key)
         emoji = p_info.get("emoji", "")
