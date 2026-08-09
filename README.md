@@ -1,5 +1,21 @@
 # Dhikr & Tahajjud Telegram Bot
 
+## Project structure
+
+The bot is split into focused modules instead of one large script:
+
+| File | Responsibility |
+|---|---|
+| `main.py` | Entrypoint — wires everything together and starts polling |
+| `config.py` | Env loading, settings/constants, logging setup |
+| `practices.py` | Static data: practice definitions, labels, poll options |
+| `db.py` | SQLite connection, schema, active-poll tracking, response/report queries |
+| `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
+| `messaging.py` | Builds and sends check-in polls and daily/weekly reports |
+| `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
+| `handlers.py` | Telegram update handlers (poll answers, new member welcome) |
+| `scheduler.py` | Registers all recurring jobs (`setup_scheduler`) |
+
 ## Run locally
 
 1. Fill in `.env` with your Telegram bot token and group chat ID.
@@ -12,7 +28,7 @@ pip install -r requirements.txt
 3. Start the bot:
 
 ```powershell
-python script.py
+python main.py
 ```
 
 ## Run with Docker
@@ -31,6 +47,16 @@ docker compose logs -f
 ```
 
 The SQLite database is stored in `./data/dhikr_records.db` on the host.
+
+### Data persistence across redeploys
+
+`./data` is a **bind mount** (see `docker-compose.yml`), so it lives on the host filesystem, completely separate from the git repo and the Docker image. Pulling the latest commit and running `docker compose up -d --build` only rebuilds the app code — it never touches `./data`, so your check-in history is safe across redeploys.
+
+Make sure `data/` and `.env` are listed in `.gitignore` (included in this repo) so they're never committed or clobbered by a `git pull`. The only things that *would* wipe the database are:
+
+- Running `docker compose down -v` (the `-v` flag deletes volumes)
+- Manually deleting the `./data` folder
+- Deploying to a host without persistent disk (see the Railway section below)
 
 ## Deploy on Oracle Cloud Free Tier
 
@@ -133,3 +159,57 @@ Use Railway PostgreSQL instead of SQLite, or move to a host that supports persis
 - The bot does not need an exposed web port because it uses Telegram polling.
 - Railway only needs to run the container continuously.
 - `restart: unless-stopped` is useful on Docker hosts, but Railway manages restarts for you.
+
+## Auto-deploy with a cron job (pull every hour)
+
+On a server you manage yourself (e.g. the Oracle Cloud VM above), you can automatically pull the latest commit and redeploy every hour using cron. This uses the included `deploy.sh` script, which:
+
+- Fetches and resets to the latest commit on `origin/main`
+- Only rebuilds the Docker image if a new commit was actually pulled
+- Never touches `./data`, since it's a bind mount outside the git repo (see [Data persistence across redeploys](#data-persistence-across-redeploys))
+- Logs its output to `deploy.log` in the project directory
+
+### 1. Make the script executable
+
+On the server, inside the project directory:
+
+```bash
+chmod +x deploy.sh
+```
+
+### 2. Test it manually first
+
+```bash
+./deploy.sh
+cat deploy.log
+```
+
+Confirm it pulls correctly and the bot container restarts (`docker compose ps`).
+
+### 3. Add the cron job
+
+Open your crontab:
+
+```bash
+crontab -e
+```
+
+Add this line, replacing `/home/ubuntu/dhikr-bot` with the actual full path to your project directory on the server:
+
+```cron
+0 * * * * cd /home/ubuntu/dhikr-bot && ./deploy.sh
+```
+
+This runs `deploy.sh` at the top of every hour. Save and exit — cron picks it up automatically.
+
+### 4. Verify it's scheduled
+
+```bash
+crontab -l
+```
+
+### Notes
+
+- If your default branch isn't `main`, edit the `git reset --hard origin/main` line in `deploy.sh` to match (e.g. `origin/master`).
+- `deploy.log` will grow over time; rotate or truncate it periodically if you want (e.g. `> deploy.log` monthly, or point it through `logrotate`).
+- Since `deploy.sh` uses `git reset --hard`, any *uncommitted* local changes in the project directory on the server will be discarded on each run — keep the server checkout clean and make all changes through your repo.

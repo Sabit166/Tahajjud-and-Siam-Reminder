@@ -8,6 +8,6 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY script.py ./
+COPY config.py practices.py db.py scheduling.py messaging.py jobs.py handlers.py scheduler.py main.py ./
 
-CMD ["python", "script.py"]
+CMD ["python", "main.py"]

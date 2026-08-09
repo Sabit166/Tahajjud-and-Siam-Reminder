@@ -1,4 +1,5 @@
 .env
+.puku/
 __pycache__/
 *.pyc
 env/
