@@ -2,74 +2,52 @@
 #  DHIKR & TAHAJJUD TELEGRAM BOT
 #  Built for your Islamic accountability group
 # ============================================================
-#
-#  SETUP — fill in these 2 values before running:
-#
-#    BOT_TOKEN       : get this from @BotFather on Telegram
-#    GROUP_CHAT_ID: your group's ID (negative number, e.g. -1001234567890)
-#                  To find it: add @userinfobot to your group,
-#                  it will post the ID automatically, then remove it.
-#
-# ============================================================
 
+import os
 import logging
 import asyncio
-import importlib
 import sqlite3
 import datetime
 from pathlib import Path
 from typing import Any, Optional, cast
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from contextlib import contextmanager
+
+import pytz
+from telegram import Bot, Update
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
     PollAnswerHandler,
     filters,
 )
-import pytz
-import os
 
+# Load environment variables
 try:
-    load_dotenv = importlib.import_module("dotenv").load_dotenv
+    from dotenv import load_dotenv
+    load_dotenv()
 except ImportError:
-    def load_dotenv() -> None:
-        env_path = Path(".env")
-        if not env_path.exists():
-            return
-
+    env_path = Path(".env")
+    if env_path.exists():
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 # ============================================================
-#  YOUR SETTINGS — EDIT THESE TWO LINES
+#  SETTINGS & CONFIGURATION
 # ============================================================
-
-load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN", "")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
 DB_PATH = os.getenv("DB_PATH", "dhikr_records.db")
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
+
 RESPONSE_WINDOW_HOURS = 24
-RESPONSE_DELETE_AFTER_MINUTES = int(os.getenv("RESPONSE_DELETE_AFTER_MINUTES", "10"))
+RESPONSE_DELETE_AFTER_SECONDS = 10
 DAILY_REPORT_HOUR = 18
 DAILY_REPORT_MINUTE = 30
-
-# ============================================================
-#  TIMEZONE — Bangladesh Standard Time (UTC+6)
-# ============================================================
-
-
-# ============================================================
-#  LOGGING (shows activity in your terminal)
-# ============================================================
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -78,50 +56,82 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ============================================================
-#  DATABASE SETUP
-#  Creates a file called dhikr_records.db in the same folder.
-#  All responses are stored here automatically.
+#  DATABASE HELPERS
 # ============================================================
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def init_db():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS responses (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL,
-            username    TEXT,
-            full_name   TEXT,
-            practice    TEXT NOT NULL,
-            did_it      INTEGER NOT NULL,   -- 1 = Yes, 0 = No
-            date        TEXT NOT NULL,
-            recorded_at TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS active_polls (
-            poll_id      TEXT PRIMARY KEY,
-            practice_key TEXT NOT NULL,
-            created_at   TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS responses (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                username    TEXT,
+                full_name   TEXT,
+                practice    TEXT NOT NULL,
+                did_it      INTEGER NOT NULL,
+                date        TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS active_polls (
+                poll_id      TEXT PRIMARY KEY,
+                practice_key TEXT NOT NULL,
+                created_at   TEXT NOT NULL
+            )
+        """)
+        conn.commit()
     log.info("Database ready.")
+
+def delete_active_poll(poll_id: str):
+    ACTIVE_POLLS.pop(poll_id, None)
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM active_polls WHERE poll_id=?", (poll_id,))
+            conn.commit()
+    except Exception as exc:
+        log.warning(f"Could not delete active poll {poll_id}: {exc}")
+
+def cleanup_old_active_polls(hours: int = 24):
+    try:
+        cutoff = (datetime.datetime.now(BD_TZ) - datetime.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM active_polls WHERE created_at < ?", (cutoff,))
+            deleted = c.rowcount
+            conn.commit()
+        if deleted > 0:
+            log.info(f"Cleaned up {deleted} old active poll(s).")
+    except Exception as exc:
+        log.warning(f"Could not cleanup old active polls: {exc}")
+
+init_db()
+cleanup_old_active_polls(24)
+
+ACTIVE_POLLS: dict[str, str] = {}
 
 def save_active_poll(poll_id: str, practice_key: str):
     ACTIVE_POLLS[poll_id] = practice_key
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        now = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("""
-            INSERT OR REPLACE INTO active_polls (poll_id, practice_key, created_at)
-            VALUES (?, ?, ?)
-        """, (poll_id, practice_key, now))
-        conn.commit()
-        conn.close()
+        with get_db() as conn:
+            c = conn.cursor()
+            now = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("""
+                INSERT OR REPLACE INTO active_polls (poll_id, practice_key, created_at)
+                VALUES (?, ?, ?)
+            """, (poll_id, practice_key, now))
+            conn.commit()
     except Exception as exc:
         log.warning(f"Could not save active poll {poll_id}: {exc}")
 
@@ -129,72 +139,61 @@ def get_poll_practice(poll_id: str) -> Optional[str]:
     if poll_id in ACTIVE_POLLS:
         return ACTIVE_POLLS[poll_id]
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT practice_key FROM active_polls WHERE poll_id=?", (poll_id,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            ACTIVE_POLLS[poll_id] = row[0]
-            return row[0]
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT practice_key FROM active_polls WHERE poll_id=?", (poll_id,))
+            row = c.fetchone()
+            if row:
+                ACTIVE_POLLS[poll_id] = row[0]
+                return row[0]
     except Exception as exc:
         log.warning(f"Could not read active poll {poll_id}: {exc}")
     return None
 
-def save_response(user_id, username, full_name, practice, did_it):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+def save_response(user_id: int, username: str, full_name: str, practice: str, did_it: int):
     today = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d")
-    now   = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.datetime.now(BD_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Prevent duplicate entries for same user + practice + day
-    c.execute("""
-        SELECT id FROM responses
-        WHERE user_id=? AND practice=? AND date=?
-    """, (user_id, practice, today))
-    existing = c.fetchone()
-
-    if existing:
+    with get_db() as conn:
+        c = conn.cursor()
         c.execute("""
-            UPDATE responses SET did_it=?, recorded_at=?
+            SELECT id FROM responses
             WHERE user_id=? AND practice=? AND date=?
-        """, (did_it, now, user_id, practice, today))
-        log.info(f"Updated response: {full_name} | {practice} | did_it={did_it}")
-    else:
-        c.execute("""
-            INSERT INTO responses (user_id, username, full_name, practice, did_it, date, recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, username, full_name, practice, did_it, today, now))
-        log.info(f"New response: {full_name} | {practice} | did_it={did_it}")
+        """, (user_id, practice, today))
+        existing = c.fetchone()
 
-    conn.commit()
-    conn.close()
+        if existing:
+            c.execute("""
+                UPDATE responses SET did_it=?, recorded_at=?
+                WHERE user_id=? AND practice=? AND date=?
+            """, (did_it, now, user_id, practice, today))
+            log.info(f"Updated response: {full_name} | {practice} | did_it={did_it}")
+        else:
+            c.execute("""
+                INSERT INTO responses (user_id, username, full_name, practice, did_it, date, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, full_name, practice, did_it, today, now))
+            log.info(f"New response: {full_name} | {practice} | did_it={did_it}")
+
+        conn.commit()
 
 def get_weekly_summary():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    # Get the last 7 days
     today = datetime.datetime.now(BD_TZ).date()
     week_ago = today - datetime.timedelta(days=6)
 
-    c.execute("""
-        SELECT full_name, practice, SUM(did_it) as completed, COUNT(*) as total
-        FROM responses
-        WHERE date BETWEEN ? AND ?
-        GROUP BY user_id, practice
-        ORDER BY full_name, practice
-    """, (week_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")))
-
-    rows = c.fetchall()
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT full_name, practice, SUM(did_it) as completed, COUNT(*) as total
+            FROM responses
+            WHERE date BETWEEN ? AND ?
+            GROUP BY user_id, practice
+            ORDER BY full_name, practice
+        """, (week_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")))
+        rows = c.fetchall()
     return rows
 
-
 def get_daily_summary():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
     now = datetime.datetime.now(BD_TZ)
     report_end = now.replace(
         hour=DAILY_REPORT_HOUR,
@@ -217,27 +216,27 @@ def get_daily_summary():
     if report_start.weekday() == 3:
         scheduled_practices.append("surah_kahf")
 
-    scheduled_practices.extend(["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat"])
+    scheduled_practices.extend(["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "salatud_duha"])
     if report_end.weekday() in (0, 3):
         scheduled_practices.append("sawm")
 
     placeholders = ",".join("?" for _ in scheduled_practices)
-    c.execute(
-        f"""
-        SELECT full_name, practice, did_it
-        FROM responses
-        WHERE recorded_at > ? AND recorded_at <= ? AND practice IN ({placeholders})
-        ORDER BY full_name, practice
-        """,
-        (
-            report_start.strftime("%Y-%m-%d %H:%M:%S"),
-            report_end.strftime("%Y-%m-%d %H:%M:%S"),
-            *scheduled_practices,
-        ),
-    )
-
-    rows = c.fetchall()
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            f"""
+            SELECT full_name, practice, did_it
+            FROM responses
+            WHERE recorded_at > ? AND recorded_at <= ? AND practice IN ({placeholders})
+            ORDER BY full_name, practice
+            """,
+            (
+                report_start.strftime("%Y-%m-%d %H:%M:%S"),
+                report_end.strftime("%Y-%m-%d %H:%M:%S"),
+                *scheduled_practices,
+            ),
+        )
+        rows = c.fetchall()
 
     summary: dict[str, dict[str, int]] = {}
     for full_name, practice, did_it in rows:
@@ -246,25 +245,23 @@ def get_daily_summary():
     return scheduled_practices, summary
 
 # ============================================================
-#  CHECK-IN MESSAGES
-#  Each practice has its own emoji, label, and callback code.
+#  PRACTICE DEFINITIONS
 # ============================================================
 
-ACTIVE_POLLS: dict[str, str] = {}
-
 PRACTICES = {
-    "morning_dhikr":  {"label": "Morning Adhkar",  "emoji": "🌅", "arabic": "الأذكار الصباحية", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
-    "fazr_jamaat":   {"label": "Fazr Jamaat",      "emoji": "☀️", "arabic": "صلاة الفجر", "poll_options": ["Alhamdulillah, done", "Missed Jamaat"]},
-    "ishraq_salat":   {"label": "Ishraq Salat",      "emoji": "☀️", "arabic": "صلاة الإشراق", "poll_options": ["Alhamdulillah, done", "Missed"]},
-    "evening_dhikr":  {"label": "Evening Adhkar",  "emoji": "🌆", "arabic": "الأذكار المسائية", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
-    "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "emoji": "🤍", "arabic": "الصلاة على رسول الله", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
-    "sawm":           {"label": "Sawm",           "emoji": "🌙", "arabic": "الصيام", "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"]},
-    "surah_kahf":     {"label": "Surah Kahf",      "emoji": "📖", "arabic": "سورة الكهف", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
-    "tahajjud":       {"label": "Tahajjud Salat",  "emoji": "🌙", "arabic": "صلاة التهجد", "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"]},
-    "nightly_al_mulk": {"label": "Surat Al-Mulk", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
-    "nightly_as_sajdah": {"label": "Surat As-Sajdah", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
-    "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "emoji": "📖", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
-    "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "emoji": "📿", "arabic": "الأعمال الليلية", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "morning_dhikr":  {"label": "Morning Adhkar",  "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "fazr_jamaat":   {"label": "Fazr Jamaat",      "poll_options": ["Alhamdulillah, done", "Missed Jamaat"]},
+    "ishraq_salat":   {"label": "Ishraq Salat",      "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "salatud_duha":   {"label": "Salatud Duha",      "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "evening_dhikr":  {"label": "Evening Adhkar",  "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "sawm":           {"label": "Sawm",           "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"]},
+    "surah_kahf":     {"label": "Surah Kahf",      "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
+    "tahajjud":       {"label": "Tahajjud Salat",  "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"]},
+    "nightly_al_mulk": {"label": "Surat Al-Mulk", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_as_sajdah": {"label": "Surat As-Sajdah", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "poll_options": ["Alhamdulillah, done", "Missed"]},
 }
 
 NIGHTLY_AMAL_OPTIONS = [
@@ -278,6 +275,7 @@ GROUP_AMAL_LABELS = [
     "Morning Adhkar",
     "Fazr Jamaat",
     "Ishraq Salat",
+    "Salatud Duha",
     "Evening Adhkar",
     "Salawat on Rasulullah",
     "Sawm",
@@ -290,21 +288,13 @@ GROUP_AMAL_LABELS = [
     "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
 ]
 
-def make_checkin_keyboard(practice_key):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅  Yes, alhamdulillah", callback_data=f"yes_{practice_key}"),
-            InlineKeyboardButton("❌  Not yet",            callback_data=f"no_{practice_key}"),
-        ]
-    ])
-
 # ============================================================
-#  SCHEDULED MESSAGE SENDERS
+#  MESSAGE SENDERS & POLL CLOSING
 # ============================================================
 
 async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     p = PRACTICES[practice_key]
-    question = f"{p['emoji']} {p['label']} | {p['arabic']}"
+    question = p["label"]
     sent_message = await bot.send_poll(
         chat_id=GROUP_CHAT_ID,
         question=question,
@@ -320,68 +310,38 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
         schedule_poll_close(job_queue, sent_message, p['label'])
     log.info(f"Sent check-in poll: {p['label']}")
 
-
-async def send_tahajjud_alert(bot: Bot, job_queue=None):
-    p = PRACTICES["tahajjud"]
-    question = "🌙 Tahajjud Time! Did you perform Tahajjud today?"
-    sent_message = await bot.send_poll(
-        chat_id=GROUP_CHAT_ID,
-        question=question,
-        options=p["poll_options"],
-        is_anonymous=False,
-        allows_multiple_answers=False,
-    )
-    if sent_message.poll:
-        save_active_poll(sent_message.poll.id, "tahajjud")
-
-    if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Tahajjud poll will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_poll_close(job_queue, sent_message, "tahajjud")
-    log.info("Sent tahajjud poll.")
-
-
 async def send_nightly_amal(bot: Bot, job_queue=None):
     for key in NIGHTLY_AMAL_OPTIONS:
         await send_checkin(bot, key, job_queue)
         await asyncio.sleep(1)
     log.info("Sent all 4 Nightly Amal polls.")
 
-
 async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()
-
     if not rows:
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
-            text="📊 *Weekly Report*\n\nNo responses recorded this week yet.",
+            text="Weekly Report:\n━━━━━━━━━━━━━━━━━━━━\nNo responses recorded this week yet.",
             parse_mode="Markdown"
         )
         return
 
-    # Build report text
-    report = "📊  *Weekly Dhikr & Salat Report*\n"
-    report += f"_{datetime.datetime.now(BD_TZ).strftime('%d %B %Y')}_\n"
-    report += "\n*Al-Quran 17:14*\n"
-    report += "ٱقْرَأْ كِتَٰبَكَ كَفَىٰ بِنَفْسِكَ ٱلْيَوْمَ عَلَيْكَ حَسِيبًا\n"
-    report += "_Read! You yourself are sufficient as an accountant on yourself_\n"
-    report += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    report = "Weekly Report:\n━━━━━━━━━━━━━━━━━━━━\n"
 
     current_name = None
     for full_name, practice, completed, total in rows:
         if full_name != current_name:
             if current_name is not None:
-                report += "\n"
-            report += f"👤 *{full_name}*\n"
+                report += "━━━━━━━━━━━━━━━━━━━━\n"
+            report += f"*{full_name}*\n"
             current_name = full_name
 
         p_info = PRACTICES.get(practice, {})
-        emoji  = p_info.get("emoji", "•")
-        label  = p_info.get("label", practice)
-        bar    = "🟩" * completed + "⬜" * (total - completed)
-        report += f"  {emoji} {label}: {bar} {completed}/{total}\n"
+        label = p_info.get("label", practice)
+        bar = "🟩" * completed + "⬜" * (total - completed)
+        report += f"  -- {label}: {bar} {completed}/{total}\n"
 
-    report += "\n━━━━━━━━━━━━━━━━━━━━\n"
-    report += "May Allah accept from all of us. آمين 🤲"
+    report += "━━━━━━━━━━━━━━━━━━━━"
 
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
@@ -390,36 +350,30 @@ async def send_weekly_report(bot: Bot):
     )
     log.info("Sent weekly report.")
 
-
 async def send_daily_report(bot: Bot):
     scheduled_practices, summary = get_daily_summary()
 
-    report = "📊 *Daily Accountability Dashboard*\n\n"
-    report += (
-        "*Hadith*\n"
-        "Aisha reported that the Prophet was asked, \"What deeds are loved most by Allah?\" "
-        "He replied, \"The most regular constant deeds even though they may be few,\" and added, "
-        "\"Do not take upon yourselves, except the deeds which are within your ability.\" "
-        "(Recorded in Sahih al-Bukhari 6465)\n"
-    )
-    report += "━━━━━━━━━━━━━━━━━━━━\n\n"
-
     if not summary:
-        report += "No responses recorded today yet.\n"
-    else:
-        for full_name in sorted(summary):
-            report += f"👤 *{full_name}*\n"
-            for practice in scheduled_practices:
-                p_info = PRACTICES.get(practice, {})
-                emoji = p_info.get("emoji", "•")
-                label = p_info.get("label", practice)
-                did_it = summary[full_name].get(practice, 0)
-                status = "✅ Done" if did_it else "❌ Missed"
-                report += f"  {emoji} {label}: {status}\n"
-            report += "\n"
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text="Daily Report:\n━━━━━━━━━━━━━━━━━━━━\nNo responses recorded today yet.",
+            parse_mode="Markdown"
+        )
+        return
 
-    report += "━━━━━━━━━━━━━━━━━━━━\n"
-    report += "May Allah accept from all of us. آمين 🤲"
+    report = "Daily Report:\n━━━━━━━━━━━━━━━━━━━━\n"
+
+    for full_name in sorted(summary):
+        report += f"*{full_name}*\n"
+        for practice in scheduled_practices:
+            p_info = PRACTICES.get(practice, {})
+            label = p_info.get("label", practice)
+            did_it = summary[full_name].get(practice, 0)
+            status = "Done" if did_it else "Missed"
+            report += f"  -- {label}: {status}\n"
+        report += "━━━━━━━━━━━━━━━━━━━━\n"
+
+    report = report.rstrip("\n")
 
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
@@ -427,7 +381,6 @@ async def send_daily_report(bot: Bot):
         parse_mode="Markdown"
     )
     log.info("Sent daily report.")
-
 
 async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
@@ -443,45 +396,20 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as exc:
         log.warning(f"Could not delete message {message.get('label', 'unknown')}: {exc}")
 
-
 async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     if job is None:
         return
     await send_checkin(context.bot, cast(str, job.data), context.job_queue)
 
-
-async def send_tahajjud_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_tahajjud_alert(context.bot, context.job_queue)
-
-
 async def send_nightly_amal_job(context: ContextTypes.DEFAULT_TYPE):
     await send_nightly_amal(context.bot, context.job_queue)
-
 
 async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
 
-
 async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_daily_report(context.bot)
-
-
-async def close_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    if job is None:
-        return
-    message = cast(dict[str, Any], job.data)
-    try:
-        await context.bot.edit_message_reply_markup(
-            chat_id=message["chat_id"],
-            message_id=message["message_id"],
-            reply_markup=None,
-        )
-        log.info(f"Closed reminder: {message.get('label', 'unknown')}")
-    except Exception as exc:
-        log.warning(f"Could not close reminder {message.get('label', 'unknown')}: {exc}")
-
 
 async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
@@ -489,30 +417,15 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
         return
     message = cast(dict[str, Any], job.data)
     try:
-        await context.bot.stop_poll(
+        stopped = await context.bot.stop_poll(
             chat_id=message["chat_id"],
             message_id=message["message_id"],
         )
+        if stopped and stopped.id:
+            delete_active_poll(stopped.id)
         log.info(f"Closed poll: {message.get('label', 'unknown')}")
     except Exception as exc:
         log.warning(f"Could not close poll {message.get('label', 'unknown')}: {exc}")
-
-
-def schedule_reminder_close(job_queue, sent_message, label):
-    if job_queue is None or RESPONSE_WINDOW_HOURS <= 0:
-        return
-
-    job_queue.run_once(
-        close_reminder_job,
-        when=datetime.timedelta(hours=RESPONSE_WINDOW_HOURS),
-        data={
-            "chat_id": sent_message.chat_id,
-            "message_id": sent_message.message_id,
-            "label": label,
-        },
-        name=f"close_{label}_{sent_message.message_id}",
-    )
-
 
 def schedule_poll_close(job_queue, sent_message, label):
     if job_queue is None or RESPONSE_WINDOW_HOURS <= 0:
@@ -529,14 +442,13 @@ def schedule_poll_close(job_queue, sent_message, label):
         name=f"close_poll_{label}_{sent_message.message_id}",
     )
 
-
 def schedule_message_delete(job_queue, sent_message, label):
-    if job_queue is None or RESPONSE_DELETE_AFTER_MINUTES <= 0:
+    if job_queue is None or RESPONSE_DELETE_AFTER_SECONDS <= 0:
         return
 
     job_queue.run_once(
         delete_message_job,
-        when=datetime.timedelta(minutes=RESPONSE_DELETE_AFTER_MINUTES),
+        when=datetime.timedelta(seconds=RESPONSE_DELETE_AFTER_SECONDS),
         data={
             "chat_id": sent_message.chat_id,
             "message_id": sent_message.message_id,
@@ -546,56 +458,15 @@ def schedule_message_delete(job_queue, sent_message, label):
     )
 
 # ============================================================
-#  BUTTON PRESS HANDLER
-#  Runs when a member taps Yes or No on any check-in message.
+#  HANDLERS
 # ============================================================
-
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query    = update.callback_query
-    if query is None:
-        return
-    user     = query.from_user
-    if user is None or query.data is None:
-        return
-    data     = cast(str, query.data)   # e.g. "yes_morning_dhikr" or "no_fazr_salat"
-
-    await query.answer()    # removes the loading spinner on the button
-
-    parts    = data.split("_", 1)
-    response = parts[0]           # "yes" or "no"
-    practice = parts[1]           # e.g. "morning_dhikr"
-    did_it   = 1 if response == "yes" else 0
-
-    full_name = user.full_name or user.username or str(user.id)
-    username  = user.username or ""
-
-    save_response(user.id, username, full_name, practice, did_it)
-
-    p_info = PRACTICES.get(practice, {})
-    label  = p_info.get("label", practice)
-    emoji  = p_info.get("emoji", "")
-
-    if did_it:
-        reply = f"✅ Jazakallahu Khayran, *{full_name}*! Your *{label}* has been recorded. {emoji}\nA small deed with pure intentions bear huge weight before Allah. May Allah accept it from you. 🤲"
-    else:
-        reply = f"📝 Noted, *{full_name}*. You missed *{label}* this time, but don't let this refrain you from other acts of worship! May Allah make it easy for you. 💪"
-
-    response_message = await context.bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=reply,
-        parse_mode="Markdown",
-    )
-    schedule_message_delete(context.job_queue, response_message, f"button_reply_{practice}")
-
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
-    if answer is None:
-        return
-    user = answer.user
-    if user is None:
+    if answer is None or answer.user is None:
         return
 
+    user = answer.user
     full_name = user.full_name or user.username or str(user.id)
     username = user.username or ""
     poll_id = answer.poll_id
@@ -605,7 +476,6 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if practice_key in PRACTICES:
         p_info = PRACTICES[practice_key]
         label = p_info.get("label", practice_key)
-        emoji = p_info.get("emoji", "")
 
         if not answer.option_ids:
             log.info(f"User {full_name} retracted vote for {label}")
@@ -615,15 +485,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         save_response(user.id, username, full_name, practice_key, did_it)
 
         if did_it:
-            reply = (
-                f"✅ Jazakallahu Khayran, *{full_name}*! Your *{label}* has been recorded. {emoji}\n"
-                f"A small deed with pure intentions bears huge weight before Allah. May Allah accept it from you. 🤲"
-            )
+            reply = f"MashaAllah --- {full_name} --- {label}"
         else:
-            reply = (
-                f"📝 Noted, *{full_name}*. You recorded *{label}* for today. "
-                f"May Allah make it easy for you and grant you consistency. 💪"
-            )
+            reply = f"InshaAllah next time --- {full_name} --- {label}"
 
         response_message = await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -634,7 +498,6 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     else:
         log.info(f"Received poll answer from {full_name} for untracked poll ID {poll_id}")
-
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -647,7 +510,7 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         display_name = member.full_name or member.username or "brother"
         welcome_text = (
-            f"Assalamu Alaikum wa Rahmatullahi wa Barakatuh, <b>{display_name}</b> 🤍\n\n"
+            f"Assalamu Alaikum wa Rahmatullahi wa Barakatuh, <b>{display_name}</b>\n\n"
             "Welcome to our little circle of remembrance and accountability. May Allah make your stay here beneficial, easy, and full of barakah.\n\n"
             "Here is the amal we follow together:\n"
         )
@@ -655,7 +518,7 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             welcome_text += f"• {label}\n"
 
         welcome_text += (
-            "\nWe ask Allah to accept every effort, even the small ones, and to keep our hearts firm upon الخير. آمين."
+            "\nWe ask Allah to accept every effort, even the small ones, and to keep our hearts firm upon goodness. Ameen."
         )
 
         await context.bot.send_message(
@@ -665,56 +528,50 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ============================================================
-#  SCHEDULER — sets up all timed jobs
-#
-#  TIMES ARE IN BANGLADESH TIME (Asia/Dhaka, UTC+6)
-#  Adjust the hour/minute values below to your preference.
-#
-#  Current schedule:
-#    Morning adhkar  → 6:30 AM  daily
-#    Fazr salat      → 7:30 AM  daily
-#    Evening adhkar  → 5:30 PM  daily
-#    Tahajjud alert  → 3:30 AM  Friday & Saturday nights only
-#    Weekly report   → 9:00 AM  every Friday
-#    0 -> 6 : Sunday -> Saturday
+#  SCHEDULER SETUP
 # ============================================================
 
 def setup_scheduler(app: Application):
     job_queue = app.job_queue
-
     if job_queue is None:
-        raise RuntimeError(
-            "JobQueue is not available. Install python-telegram-bot with job-queue support."
-        )
+        raise RuntimeError("JobQueue is not available.")
 
-    # Morning adhkar — 6:30 AM every day
+    # Daily practice polls
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
+        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="morning_dhikr",
         name="morning_dhikr",
     )
-
-    # Fazr salat — 7:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
+        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="fazr_jamaat",
         name="fazr_jamaat",
     )
-    
-    # Fazr salat — 7:30 AM every day
     job_queue.run_daily(
         send_checkin_job,
-        time=datetime.time(hour=5, minute=00, tzinfo=BD_TZ),
+        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="ishraq_salat",
         name="ishraq_salat",
     )
-
-    # Evening adhkar — 5:30 PM every day
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=10, minute=0, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="salatud_duha",
+        name="salatud_duha",
+    )
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="salawat_on_rasulullah",
+        name="salawat_on_rasulullah",
+    )
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=19, minute=30, tzinfo=BD_TZ),
@@ -723,16 +580,7 @@ def setup_scheduler(app: Application):
         name="evening_dhikr",
     )
 
-    # Salawat on Rasulullah — 7:00 PM every day
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="salawat_on_rasulullah",
-        name="salawat_on_rasulullah",
-    )
-
-    # Sawm — 4:00 AM on Monday and Thursday
+    # Fasting (Sawm) - Mondays & Thursdays at 4:00 AM
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=4, minute=0, tzinfo=BD_TZ),
@@ -741,7 +589,7 @@ def setup_scheduler(app: Application):
         name="sawm",
     )
 
-    # Surah Kahf — 7:00 PM on Thursday
+    # Surah Kahf - Thursdays at 7:00 PM
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
@@ -750,16 +598,16 @@ def setup_scheduler(app: Application):
         name="surah_kahf",
     )
 
-    # Tahajjud alert — 3:30 AM on Friday & Saturday nights
-    # (In Python/Telegram JobQueue, Monday=1 so Friday=5 and Saturday=6)
+    # Tahajjud - Daily at 3:00 AM
     job_queue.run_daily(
-        send_tahajjud_job,
-        time=datetime.time(hour=3, minute=00, tzinfo=BD_TZ),
+        send_checkin_job,
+        time=datetime.time(hour=3, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
+        data="tahajjud",
         name="tahajjud",
     )
 
-    # Daily report — every day at 6:30 PM
+    # Daily Report - Daily at 6:30 PM
     job_queue.run_daily(
         send_daily_report_job,
         time=datetime.time(hour=18, minute=30, tzinfo=BD_TZ),
@@ -767,18 +615,18 @@ def setup_scheduler(app: Application):
         name="daily_report",
     )
 
-    # Weekly report — every Thursday at 8:50 PM
+    # Weekly Report - Fridays at 6:30 PM
     job_queue.run_daily(
         send_weekly_report_job,
-        time=datetime.time(hour=20, minute=50, tzinfo=BD_TZ),
-        days=(4,),
+        time=datetime.time(hour=18, minute=30, tzinfo=BD_TZ),
+        days=(5,),
         name="weekly_report",
     )
 
-    # Nightly Amal — 10:30 PM every day
+    # Nightly Amal - Daily at 10:00 PM
     job_queue.run_daily(
         send_nightly_amal_job,
-        time=datetime.time(hour=22, minute=00, tzinfo=BD_TZ),
+        time=datetime.time(hour=22, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         name="nightly_amal",
     )
@@ -787,37 +635,25 @@ def setup_scheduler(app: Application):
     return job_queue
 
 # ============================================================
-#  MAIN — starts everything
+#  MAIN ENTRYPOINT
 # ============================================================
 
 def main():
-    # Safety check
     if not TOKEN:
-        print("\n❌  ERROR: You forgot to paste your bot token!")
-        print("   Set BOT_TOKEN in your environment or .env file.\n")
+        print("\nERROR: BOT_TOKEN is missing in your environment or .env file!\n")
         return
 
     if GROUP_CHAT_ID == 0:
-        print("\n❌  ERROR: You forgot to set your GROUP_CHAT_ID!")
-        print("   Set GROUP_CHAT_ID in your environment or .env file.\n")
+        print("\nERROR: GROUP_CHAT_ID is missing in your environment or .env file!\n")
         return
 
-    # Initialize database
     init_db()
 
-    # Build the bot application
     app = Application.builder().token(TOKEN).build()
 
-    # Register button handler
-    app.add_handler(CallbackQueryHandler(handle_button))
-
-    # Register poll answer handler
     app.add_handler(PollAnswerHandler(handle_poll_answer))
-
-    # Welcome new members
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
-    # Setup scheduler
     setup_scheduler(app)
 
     log.info("Bot is running! Press Ctrl+C to stop.")
