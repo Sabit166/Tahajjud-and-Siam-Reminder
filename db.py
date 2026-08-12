@@ -46,6 +46,17 @@ def init_db():
                 created_at   TEXT NOT NULL
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS streaks (
+                user_id          INTEGER NOT NULL,
+                practice         TEXT    NOT NULL,
+                current_streak   INTEGER NOT NULL DEFAULT 0,
+                longest_streak   INTEGER NOT NULL DEFAULT 0,
+                last_done_date   TEXT,
+                last_scheduled_date TEXT,
+                PRIMARY KEY (user_id, practice)
+            )
+        """)
         conn.commit()
     log.info("Database ready.")
 
@@ -146,6 +157,26 @@ def get_weekly_summary():
         rows = c.fetchall()
     return rows
 
+
+# Maximum possible weekly completions per practice.
+# Most daily practices = 7 (once per day). Sawm = 2 (Mon+Thu). Surah Kahf = 1 (Fri).
+WEEKLY_MAX: dict[str, int] = {
+    "morning_dhikr": 7,
+    "fazr_jamaat": 7,
+    "ishraq_salat": 7,
+    "salatud_duha": 7,
+    "evening_dhikr": 7,
+    "salawat_on_rasulullah": 7,
+    "tahajjud": 7,
+    "istighfar_100x": 7,
+    "sawm": 2,
+    "surah_kahf": 1,
+    "nightly_al_mulk": 7,
+    "nightly_as_sajdah": 7,
+    "nightly_al_baqarah_last_2": 7,
+    "nightly_33_tasbeeh": 7,
+}
+
 def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]]]:
     now = datetime.datetime.now(BD_TZ)
     report_end = now.replace(
@@ -169,7 +200,7 @@ def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]]]:
     if report_start.weekday() == 3:
         scheduled_practices.append("surah_kahf")
 
-    scheduled_practices.extend(["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "salatud_duha"])
+    scheduled_practices.extend(["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "salatud_duha", "istighfar_100x"])
     if report_end.weekday() in (0, 3):
         scheduled_practices.append("sawm")
 
@@ -196,3 +227,145 @@ def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]]]:
         summary.setdefault(full_name, {})[practice] = did_it
 
     return scheduled_practices, summary
+
+
+# ============================================================
+#  STREAK HELPERS
+# ============================================================
+#
+# Streaks are counted FORWARD ONLY (Q3=A): existing history is not
+# back-filled. The handler calls update_streak_for_response() on every
+# poll answer with the *scheduled date* (the date the poll was meant
+# for) and whether the user did it.
+#
+# For practices scheduled only on specific weekdays (sawm, surah_kahf),
+# non-scheduled days do NOT break the streak. The caller is expected to
+# pass the scheduled date, not "today", and we compare consecutive
+# scheduled dates only.
+
+def get_streak(user_id: int, practice: str) -> int:
+    """Return the current streak count for a (user, practice). 0 if none."""
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT current_streak FROM streaks WHERE user_id=? AND practice=?",
+            (user_id, practice),
+        )
+        row = c.fetchone()
+        return int(row[0]) if row else 0
+
+
+def get_all_streaks(user_id: int) -> dict[str, int]:
+    """Return {practice: current_streak} for every tracked practice."""
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT practice, current_streak FROM streaks WHERE user_id=?",
+            (user_id,),
+        )
+        return {practice: int(s) for practice, s in c.fetchall()}
+
+
+def update_streak_for_response(
+    user_id: int,
+    practice: str,
+    scheduled_date: str,    # "YYYY-MM-DD" the poll was meant for
+    did_it: bool,
+) -> int:
+    """
+    Update the streak for a (user, practice) given today's outcome.
+
+    - If did_it: if last_done_date == yesterday (or for scheduled-only
+      practices, the previous scheduled date), increment; else reset to 1.
+    - If NOT did_it: reset to 0 (Q2=A).
+
+    Returns the new current_streak.
+    """
+    today = scheduled_date
+    new_streak = 0
+
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT current_streak, longest_streak, last_done_date FROM streaks "
+            "WHERE user_id=? AND practice=?",
+            (user_id, practice),
+        )
+        row = c.fetchone()
+
+        if did_it:
+            if row is None:
+                new_streak = 1
+                longest = 1
+                last_done = today
+            else:
+                prev_streak, longest, last_done = row
+                if last_done:
+                    try:
+                        prev_date = datetime.date.fromisoformat(last_done)
+                        cur_date = datetime.date.fromisoformat(today)
+                        delta_days = (cur_date - prev_date).days
+                    except ValueError:
+                        delta_days = None
+
+                    if delta_days == 1:
+                        new_streak = prev_streak + 1
+                    elif delta_days is not None and delta_days > 1:
+                        # Scheduled-only practices (sawm, kahf) skip days.
+                        # If the gap exactly matches the weekday gap, allow
+                        # it; otherwise reset.
+                        new_streak = prev_streak + 1 if _is_consecutive_scheduled(
+                            practice, prev_date, cur_date
+                        ) else 1
+                    else:
+                        new_streak = 1
+                else:
+                    new_streak = 1
+                longest = max(int(longest), new_streak)
+                last_done = today
+        else:
+            # Missed: reset to 0 (Q2=A: immediate reset).
+            new_streak = 0
+            longest = int(row[1]) if row else 0
+            last_done = row[2] if row else None
+
+        c.execute(
+            """
+            INSERT INTO streaks (user_id, practice, current_streak, longest_streak, last_done_date, last_scheduled_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, practice) DO UPDATE SET
+                current_streak=excluded.current_streak,
+                longest_streak=excluded.longest_streak,
+                last_done_date=excluded.last_done_date,
+                last_scheduled_date=excluded.last_scheduled_date
+            """,
+            (user_id, practice, new_streak, longest, last_done, today),
+        )
+        conn.commit()
+    return new_streak
+
+
+def _is_consecutive_scheduled(practice: str, prev_date: datetime.date, cur_date: datetime.date) -> bool:
+    """Return True if prev_date and cur_date are consecutive *scheduled*
+    dates for this practice (i.e. weekday(prev)+1 == weekday(cur))."""
+    from practices import SCHEDULED_WEEKDAYS
+    allowed = SCHEDULED_WEEKDAYS.get(practice)
+    if not allowed:
+        return False
+    prev_was_scheduled = prev_date.weekday() in allowed
+    cur_was_scheduled = cur_date.weekday() in allowed
+    return prev_was_scheduled and cur_was_scheduled and (cur_date - prev_date).days > 0
+
+
+def get_streaks_for_user_on_date(user_id: int, on_date: str) -> dict[str, int]:
+    """Return {practice: current_streak} for a user, only including rows
+    whose last_done_date == on_date. Used by weekly report (Q10 = no
+    streak on weekly, but kept here for future use)."""
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT practice, current_streak FROM streaks "
+            "WHERE user_id=? AND last_done_date=?",
+            (user_id, on_date),
+        )
+        return {practice: int(s) for practice, s in c.fetchall()}

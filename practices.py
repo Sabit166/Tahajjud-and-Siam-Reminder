@@ -16,6 +16,7 @@ PRACTICES = {
     "nightly_as_sajdah": {"label": "Surat As-Sajdah", "poll_options": ["Alhamdulillah, done", "Missed"]},
     "nightly_al_baqarah_last_2": {"label": "Surat Al-Baqarah (Last 2 ayats)", "poll_options": ["Alhamdulillah, done", "Missed"]},
     "nightly_33_tasbeeh": {"label": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar", "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "istighfar_100x": {"label": "Istighfar 100x", "poll_options": ["Alhamdulillah, done", "Missed"]},
 }
 
 NIGHTLY_AMAL_OPTIONS = [
@@ -24,6 +25,17 @@ NIGHTLY_AMAL_OPTIONS = [
     "nightly_al_baqarah_last_2",
     "nightly_33_tasbeeh",
 ]
+
+# Set of nightly sub-practices. Each one counts as its OWN mark
+# (1 mark per sub-practice, 4 marks total per night).
+NIGHTLY_GROUP_PRACTICES = set(NIGHTLY_AMAL_OPTIONS)
+
+# Practices that are scheduled only on certain weekdays. Streaks skip
+# non-scheduled days instead of resetting.
+SCHEDULED_WEEKDAYS: dict[str, set[int]] = {
+    "sawm":       {0, 3},   # Monday (0) and Thursday (3)
+    "surah_kahf": {4},      # Friday
+}
 
 GROUP_AMAL_LABELS = [
     "Morning Adhkar",
@@ -40,4 +52,5 @@ GROUP_AMAL_LABELS = [
     "Surat As-Sajdah",
     "Surat Al-Baqarah (Last 2 ayats)",
     "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
+    "Istighfar 100x",
 ]

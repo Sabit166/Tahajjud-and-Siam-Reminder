@@ -95,6 +95,15 @@ def setup_scheduler(app: Application):
         name="tahajjud",
     )
 
+    # Istighfar 100x - Daily at 12:00 PM (noon)
+    job_queue.run_daily(
+        send_checkin_job,
+        time=datetime.time(hour=12, minute=0, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        data="istighfar_100x",
+        name="istighfar_100x",
+    )
+
     # Daily Report - Daily at 6:30 PM
     job_queue.run_daily(
         send_daily_report_job,
