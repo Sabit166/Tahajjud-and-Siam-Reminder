@@ -8,7 +8,7 @@ from typing import cast
 
 from telegram.ext import ContextTypes
 
-from messaging import send_checkin, send_nightly_amal, send_weekly_report, send_daily_report
+from messaging import send_checkin, send_nightly_amal, send_weekly_report, send_daily_report, send_jumuah_reminder
 
 async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
@@ -24,3 +24,6 @@ async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_daily_report(context.bot)
+
+async def send_jumuah_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_jumuah_reminder(context.bot)

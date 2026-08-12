@@ -9,7 +9,7 @@ import datetime
 from telegram import Bot
 
 from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, BD_TZ, log
-from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS
+from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, WEEKLY_MAX
 from scheduling import schedule_poll_close
 
@@ -40,6 +40,66 @@ async def send_nightly_amal(bot: Bot, job_queue=None):
         await send_checkin(bot, key, job_queue)
         await asyncio.sleep(1)
     log.info("Sent all 4 Nightly Amal polls.")
+
+
+def _format_jumuah_message() -> str:
+    """Build the decorated Yaum al-Jumu'ah reminder text."""
+    head = (
+        "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌿 *Yaum al-Jumu'ah — Sunnahs & Recommended Acts* 🌿\n"
+        "*The Best Day the Sun Rises Upon — Yaum al-Jumu'ah*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "May Allah grant us the ability to act upon these sunnahs. "
+        "Ameen.\n\n"
+        "📜 *Sunnahs of Yaum al-Jumu'ah:*\n"
+    )
+    body_lines = []
+    for idx, (label, desc) in enumerate(JUMUAH_SUNNAHS, start=1):
+        body_lines.append(f"  {idx:>2}. {label} — _{desc}_")
+    body = "\n".join(body_lines)
+    tail = (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📖 *\"Whoever perfects his ghusl on Friday, then goes to the masjid "
+        "early, walks (rather than rides), sits close to the imam, and "
+        "listens without crossing his legs or fidgeting — for every step, "
+        "he gets the reward of fasting and praying at night for one year.\"*\n"
+        "   — Tirmidhi\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📿 *اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ*\n"
+        "*(Allahumma salli 'ala Muhammadin wa 'ala ali Muhammad)*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return head + body + tail
+
+
+async def send_jumuah_reminder(bot: Bot):
+    """Send the Yaum al-Jumu'ah sunnah reminder to the group."""
+    text = _format_jumuah_message()
+    # Telegram message length cap is 4096 chars; this is well under that,
+    # but be safe and split if needed.
+    if len(text) <= 4096:
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=text,
+            parse_mode="Markdown",
+        )
+    else:
+        # Fallback: send first chunk, then the rest
+        first = text[:4000]
+        rest = text[4000:]
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=first,
+            parse_mode="Markdown",
+        )
+        if rest:
+            await bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=rest,
+                parse_mode="Markdown",
+            )
+    log.info("Sent Yaum al-Jumu'ah sunnah reminder.")
 
 async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()

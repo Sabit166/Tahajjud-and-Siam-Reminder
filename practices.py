@@ -54,3 +54,29 @@ GROUP_AMAL_LABELS = [
     "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
     "Istighfar 100x",
 ]
+
+# ============================================================
+#  YAUM AL-JUMU'AH SUNNAHS
+# ============================================================
+# Sunnahs and recommended acts of Yaum al-Jumu'ah (Thursday evening
+# reminder). Each entry is (label, short description) for the message.
+
+JUMUAH_SUNNAHS: list[tuple[str, str]] = [
+    ("🛁 Ghusl",                     "Take a full bath for Jumu'ah."),
+    ("🪥 Miswak",                    "Use the miswak / clean your teeth."),
+    ("💅 Trim Nails",                "Trim nails and maintain cleanliness."),
+    ("👔 Best Clothes",              "Wear your best, cleanest clothes."),
+    ("🌸 Perfume / 'Itr",            "Apply perfume if you have it."),
+    ("📿 Salawat ﷺ",                 "Send abundant Salawat upon the Prophet ﷺ."),
+    ("📖 Surah Al-Kahf",             "Recite Surah Al-Kahf (Thu Maghrib – Fri Maghrib)."),
+    ("🕌 Go Early",                  "Head to the masjid early for Jumu'ah."),
+    ("🚶 Walk to Masjid",            "Walk to the masjid if reasonably possible."),
+    ("🤲 Tahiyyat al-Masjid",        "Pray 2 rak'ahs of greeting upon entering."),
+    ("🤫 Listen to Khutbah",         "Listen silently and attentively to the khutbah."),
+    ("🤐 No Talking",                "Do not talk or distract others during the khutbah."),
+    ("🕋 Jumu'ah Salat",             "Pray the 2 rak'ahs of Jumu'ah prayer."),
+    ("🕌 Post-Jumu'ah Sunnah",       "Pray 2 or 4 rak'ahs after Jumu'ah."),
+    ("📿 Dhikr & Du'a",              "Make abundant dhikr and du'a throughout Friday."),
+    ("⏰ Sacred Hour",               "Seek the hour when du'a is accepted — especially before Maghrib."),
+    ("📿 Salawat ﷺ (continued)",     "Continue sending abundant Salawat ﷺ throughout the day."),
+]

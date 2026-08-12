@@ -13,6 +13,7 @@ from jobs import (
     send_nightly_amal_job,
     send_weekly_report_job,
     send_daily_report_job,
+    send_jumuah_reminder_job,
 )
 
 # ============================================================
@@ -84,6 +85,15 @@ def setup_scheduler(app: Application):
         days=(4,),
         data="surah_kahf",
         name="surah_kahf",
+    )
+
+    # Yaum al-Jumu'ah Sunnah Reminder - Thursdays at 7:30 PM
+    # (surah_kahf poll fires at 7:00 PM, this follows 30 min later)
+    job_queue.run_daily(
+        send_jumuah_reminder_job,
+        time=datetime.time(hour=19, minute=30, tzinfo=BD_TZ),
+        days=(4,),
+        name="jumuah_reminder",
     )
 
     # Tahajjud - Daily at 3:00 AM
