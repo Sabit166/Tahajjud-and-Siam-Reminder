@@ -197,7 +197,7 @@ crontab -e
 Add this line, replacing `/home/ubuntu/dhikr-bot` with the actual full path to your project directory on the server:
 
 ```cron
-0 * * * * cd /home/ubuntu/dhikr-bot && ./deploy.sh
+0 0 * * * cd /home/ubuntu/dhikr-bot && ./deploy.sh
 ```
 
 This runs `deploy.sh` at the top of every hour. Save and exit — cron picks it up automatically.
