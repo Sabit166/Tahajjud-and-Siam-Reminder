@@ -4,13 +4,12 @@ reports.
 """
 
 import asyncio
-import datetime
 
 from telegram import Bot
 
 from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, BD_TZ, log
 from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
-from db import save_active_poll, get_weekly_summary, get_daily_summary, WEEKLY_MAX
+from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
 from scheduling import schedule_poll_close
 
 # ============================================================
@@ -196,7 +195,7 @@ async def send_weekly_leaderboard(bot: Bot, user_weekly_marks: dict, user_max_ma
     log.info("Sent weekly leaderboard.")
 
 async def send_daily_report(bot: Bot):
-    scheduled_practices, summary = get_daily_summary()
+    scheduled_practices, summary, report_start_iso, report_end_iso = get_daily_summary()
 
     if not summary:
         await bot.send_message(
@@ -218,15 +217,24 @@ async def send_daily_report(bot: Bot):
     full_marks = len(scheduled_practices)
     sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], kv[0]))
 
+    # Pull current streaks for users who responded in this report window,
+    # so each practice line can show "✅ (🔥N)" / "❌ (🔥0)". Missed
+    # entries reset to 0; done entries are at least 1.
+    streaks_by_user = get_daily_streaks(
+        report_start_iso, report_end_iso, scheduled_practices,
+    )
+
     report = "Daily Report:\n\n━━━━━━━━━━\n"
 
     for full_name in sorted(summary):
+        user_streaks = streaks_by_user.get(full_name, {})
         report += f"*{full_name} (Marks {user_marks[full_name]}/{full_marks})*\n"
         for practice in scheduled_practices:
             label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
-            status = "✅" if did_it else "❌"
-            report += f"  -- {label}: {status}\n"
+            mark = "✅" if did_it else "❌"
+            streak_n = user_streaks.get(practice, 0)
+            report += f"  -- {label}: {mark} (🔥{streak_n})\n"
         report += "━━━━━━━━━━\n"
 
     report = report.rstrip("\n")

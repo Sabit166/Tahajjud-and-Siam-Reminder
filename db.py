@@ -177,7 +177,8 @@ WEEKLY_MAX: dict[str, int] = {
     "nightly_33_tasbeeh": 7,
 }
 
-def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]]]:
+def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]], str, str]:
+    """Return (scheduled_practices, summary, report_start_iso, report_end_iso)."""
     now = datetime.datetime.now(BD_TZ)
     report_end = now.replace(
         hour=DAILY_REPORT_HOUR,
@@ -226,7 +227,12 @@ def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]]]:
     for full_name, practice, did_it in rows:
         summary.setdefault(full_name, {})[practice] = did_it
 
-    return scheduled_practices, summary
+    return (
+        scheduled_practices,
+        summary,
+        report_start.strftime("%Y-%m-%d %H:%M:%S"),
+        report_end.strftime("%Y-%m-%d %H:%M:%S"),
+    )
 
 
 # ============================================================
@@ -369,3 +375,49 @@ def get_streaks_for_user_on_date(user_id: int, on_date: str) -> dict[str, int]:
             (user_id, on_date),
         )
         return {practice: int(s) for practice, s in c.fetchall()}
+
+
+def get_daily_streaks(
+    report_start: str, report_end: str, practices: list[str]
+) -> dict[str, dict[str, int]]:
+    """
+    Build {full_name: {practice: current_streak}} for users who responded
+    in the given [report_start, report_end) window, restricted to the
+    given practices. Users/practices with no row in `streaks` are simply
+    absent — callers should default to 0.
+
+    Note: keyed by `full_name` to match the daily report grouping. If
+    two Telegram users share a name, their streak rows are merged (last
+    written wins per practice). Acceptable for the report's purposes.
+    """
+    placeholders = ",".join("?" for _ in practices)
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            f"""
+            SELECT DISTINCT r.user_id, r.full_name
+            FROM responses r
+            WHERE r.recorded_at > ? AND r.recorded_at <= ?
+              AND r.practice IN ({placeholders})
+            """,
+            (report_start, report_end, *practices),
+        )
+        user_rows = c.fetchall()
+
+        result: dict[str, dict[str, int]] = {}
+        for user_id, full_name in user_rows:
+            c.execute(
+                "SELECT practice, current_streak FROM streaks "
+                "WHERE user_id=? AND practice IN ("
+                + placeholders
+                + ")",
+                (user_id, *practices),
+            )
+            streaks = {p: int(s) for p, s in c.fetchall()}
+            # Merge if a name appears under multiple user_ids.
+            merged = result.setdefault(full_name, {})
+            for p, s in streaks.items():
+                # Prefer the higher of the two values — a streak is
+                # something to be celebrated, not averaged down.
+                merged[p] = max(merged.get(p, 0), s)
+        return result
