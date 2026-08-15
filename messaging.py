@@ -101,12 +101,22 @@ async def send_jumuah_reminder(bot: Bot):
             )
     log.info("Sent Yaum al-Jumu'ah sunnah reminder.")
 
+def _report_label(practice: str) -> str:
+    """Return the display label used in reports."""
+    if practice == "nightly_33_tasbeeh":
+        return "33 - 33 - 34"
+    if practice == "nightly_al_baqarah_last_2":
+        return "Surat Al-Baqarah (Last 2)"
+    p_info = PRACTICES.get(practice, {})
+    return p_info.get("label", practice)
+
+
 async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()
     if not rows:
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
-            text="Weekly Report:\n━━━━━━━━━━━━━━━━━━━━\nNo responses recorded this week yet.",
+            text="Weekly Report:\n\n━━━━━━━━━━\nNo responses recorded this week yet.",
             parse_mode="Markdown"
         )
         return
@@ -138,18 +148,17 @@ async def send_weekly_report(bot: Bot):
         else:
             user_max_marks[full_name] = sum(WEEKLY_MAX.values())
 
-    report = "Weekly Report:\n━━━━━━━━━━━━━━━━━━━━\n"
+    report = "Weekly Report:\n\n━━━━━━━━━━\n"
 
     for full_name in sorted(user_data):
-        report += f"*{full_name}*\n"
+        report += f"*{full_name} (Marks {user_weekly_marks[full_name]}/{user_max_marks[full_name]})*\n"
         for practice, completed in sorted(user_data[full_name].items()):
-            p_info = PRACTICES.get(practice, {})
-            label = p_info.get("label", practice)
+            label = _report_label(practice)
             max_n = WEEKLY_MAX.get(practice, 7)
             bar = "🟩" * completed + "⬜" * max(0, max_n - completed)
-            report += f"  -- {label}: {bar} {completed}/{max_n}\n"
-        report += f"  -- *Weekly Marks: {user_weekly_marks[full_name]}/{user_max_marks[full_name]}*\n"
-        report += "━━━━━━━━━━━━━━━━━━━━\n"
+            report += f"  -- {label}:\n"
+            report += f"  {bar} {completed}/{max_n}\n"
+        report += "━━━━━━━━━━\n"
 
     report = report.rstrip("\n")
 
@@ -178,7 +187,7 @@ async def send_weekly_leaderboard(bot: Bot, user_weekly_marks: dict, user_max_ma
             last_pos = idx
             last_score = score
         board_lines.append(f"{last_pos}. {name} ({score}/{user_max_marks.get(name, '?')})")
-    text = "Weekly Leaderboard:\n━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(board_lines)
+    text = "Weekly Leaderboard:\n━━━━━━━━━\n" + "\n".join(board_lines)
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
@@ -192,7 +201,7 @@ async def send_daily_report(bot: Bot):
     if not summary:
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
-            text="Daily Report:\n━━━━━━━━━━━━━━━━━━━━\nNo responses recorded today yet.",
+            text="Daily Report:\n\n━━━━━━━━━━\nNo responses recorded today yet.",
             parse_mode="Markdown"
         )
         return
@@ -200,42 +209,25 @@ async def send_daily_report(bot: Bot):
     # Compute per-user marks. Each amal = 1 mark, including each of the
     # 4 nightly sub-practices (so nightly amal can yield up to 4 marks).
     user_marks: dict[str, int] = {}
-    user_full_marks: dict[str, int] = {}   # for total denominator
     for full_name, results in summary.items():
         marks = 0
         for practice in scheduled_practices:
             marks += 1 if results.get(practice, 0) else 0
         user_marks[full_name] = marks
 
-    # Total possible marks = number of scheduled practices for the day.
     full_marks = len(scheduled_practices)
-    for name in summary:
-        user_full_marks[name] = full_marks
+    sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], kv[0]))
 
-    # Compute positions (combined ranking; ties share the same number).
-    sorted_users = sorted(user_marks.items(), key=lambda kv: -kv[1])
-    positions: dict[str, int] = {}
-    last_score = None
-    last_pos = 0
-    for idx, (name, score) in enumerate(sorted_users, start=1):
-        if score != last_score:
-            last_pos = idx
-            last_score = score
-        positions[name] = last_pos
-
-    report = "Daily Report:\n━━━━━━━━━━━━━━━━━━━━\n"
+    report = "Daily Report:\n\n━━━━━━━━━━\n"
 
     for full_name in sorted(summary):
-        report += f"*{full_name}*\n"
+        report += f"*{full_name} (Marks {user_marks[full_name]}/{full_marks})*\n"
         for practice in scheduled_practices:
-            p_info = PRACTICES.get(practice, {})
-            label = p_info.get("label", practice)
+            label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
-            status = "Done" if did_it else "Missed"
+            status = "✅" if did_it else "❌"
             report += f"  -- {label}: {status}\n"
-        report += f"  -- *Marks: {user_marks[full_name]}/{full_marks}*\n"
-        report += f"  -- *Position: #{positions[full_name]}*\n"
-        report += "━━━━━━━━━━━━━━━━━━━━\n"
+        report += "━━━━━━━━━━\n"
 
     report = report.rstrip("\n")
 
@@ -245,7 +237,6 @@ async def send_daily_report(bot: Bot):
         parse_mode="Markdown"
     )
 
-    # Also send a separate daily leaderboard (Q7 = C).
     await send_daily_leaderboard(bot, sorted_users, full_marks)
     log.info("Sent daily report.")
 
@@ -265,7 +256,7 @@ async def send_daily_leaderboard(bot: Bot, sorted_users: list, full_marks: int):
             last_score = score
         board_lines.append(f"{last_pos}. {name} ({score}/{full_marks})")
 
-    text = "Daily Leaderboard:\n━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(board_lines)
+    text = "Daily Leaderboard:\n━━━━━━━━━\n" + "\n".join(board_lines)
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
