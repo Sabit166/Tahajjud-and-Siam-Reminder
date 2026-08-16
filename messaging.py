@@ -116,7 +116,6 @@ async def send_weekly_report(bot: Bot):
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text="Weekly Report:\n\n━━━━━━━━━━\nNo responses recorded this week yet.",
-            parse_mode="Markdown"
         )
         return
 
@@ -150,7 +149,7 @@ async def send_weekly_report(bot: Bot):
     report = "Weekly Report:\n\n━━━━━━━━━━\n"
 
     for full_name in sorted(user_data):
-        report += f"*{full_name} (Marks {user_weekly_marks[full_name]}/{user_max_marks[full_name]})*\n"
+        report += f"{full_name} (Marks {user_weekly_marks[full_name]}/{user_max_marks[full_name]})\n"
         for practice, completed in sorted(user_data[full_name].items()):
             label = _report_label(practice)
             max_n = WEEKLY_MAX.get(practice, 7)
@@ -164,7 +163,6 @@ async def send_weekly_report(bot: Bot):
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=report,
-        parse_mode="Markdown"
     )
 
     # Weekly leaderboard (Q8=A: combined across all categories).
@@ -190,7 +188,6 @@ async def send_weekly_leaderboard(bot: Bot, user_weekly_marks: dict, user_max_ma
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
-        parse_mode="Markdown",
     )
     log.info("Sent weekly leaderboard.")
 
@@ -201,7 +198,6 @@ async def send_daily_report(bot: Bot):
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text="Daily Report:\n\n━━━━━━━━━━\nNo responses recorded today yet.",
-            parse_mode="Markdown"
         )
         return
 
@@ -228,13 +224,13 @@ async def send_daily_report(bot: Bot):
 
     for full_name in sorted(summary):
         user_streaks = streaks_by_user.get(full_name, {})
-        report += f"*{full_name} (Marks {user_marks[full_name]}/{full_marks})*\n"
+        report += f"{full_name} (Marks {user_marks[full_name]}/{full_marks})\n"
         for practice in scheduled_practices:
             label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
             mark = "✅" if did_it else "❌"
             streak_n = user_streaks.get(practice, 0)
-            report += f"  -- {label}: {mark} (🔥{streak_n})\n"
+            report += f"  -- {label}: {mark} ({streak_n})\n"
         report += "━━━━━━━━━━\n"
 
     report = report.rstrip("\n")
@@ -242,7 +238,6 @@ async def send_daily_report(bot: Bot):
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=report,
-        parse_mode="Markdown"
     )
 
     await send_daily_leaderboard(bot, sorted_users, full_marks)
@@ -268,6 +263,5 @@ async def send_daily_leaderboard(bot: Bot, sorted_users: list, full_marks: int):
     await bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=text,
-        parse_mode="Markdown",
     )
     log.info("Sent daily leaderboard.")
