@@ -192,10 +192,6 @@ def format_ayah_message(prayer_name: str, bundle: AyahBundle) -> str:
         "",
         f"📖 Translation ({ref}):",
         bundle.translation,
-        "",
-        "📚 Tafsir (Ibn Kathir):",
-        bundle.tafsir or "(Tafsir unavailable for this ayah — please read "
-        "the translation carefully.)",
         header,
         "May Allah grant us beneficial knowledge and righteous action. Ameen.",
     ]
