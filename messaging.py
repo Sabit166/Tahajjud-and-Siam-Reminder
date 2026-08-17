@@ -148,10 +148,16 @@ async def send_weekly_report(bot: Bot):
         else:
             user_max_marks[full_name] = sum(WEEKLY_MAX.values())
 
+    # Sort users by marks desc, then name asc for stable tie-breaking.
+    sorted_users = sorted(
+        user_weekly_marks.items(),
+        key=lambda kv: (-kv[1], kv[0]),
+    )
+
     report = "Weekly Report:\n\n━━━━━━━━━━\n"
 
-    for full_name in sorted(user_data):
-        report += f"{full_name} (Marks {user_weekly_marks[full_name]}/{user_max_marks[full_name]})\n"
+    for rank, (full_name, marks) in enumerate(sorted_users, start=1):
+        report += f"{rank}. {full_name} (Marks {marks}/{user_max_marks[full_name]})\n"
         for practice, completed in sorted(user_data[full_name].items()):
             label = _report_label(practice)
             max_n = WEEKLY_MAX.get(practice, 7)
@@ -166,32 +172,7 @@ async def send_weekly_report(bot: Bot):
         chat_id=GROUP_CHAT_ID,
         text=report,
     )
-
-    # Weekly leaderboard (Q8=A: combined across all categories).
-    await send_weekly_leaderboard(bot, user_weekly_marks, user_max_marks)
     log.info("Sent weekly report.")
-
-
-async def send_weekly_leaderboard(bot: Bot, user_weekly_marks: dict, user_max_marks: dict):
-    """Send a separate weekly leaderboard message (combined ranking,
-    ties share positions)."""
-    if not user_weekly_marks:
-        return
-    sorted_users = sorted(user_weekly_marks.items(), key=lambda kv: -kv[1])
-    last_score = None
-    last_pos = 0
-    board_lines: list[str] = []
-    for idx, (name, score) in enumerate(sorted_users, start=1):
-        if score != last_score:
-            last_pos = idx
-            last_score = score
-        board_lines.append(f"{last_pos}. {name} ({score}/{user_max_marks.get(name, '?')})")
-    text = "Weekly Leaderboard:\n━━━━━━━━━\n" + "\n".join(board_lines)
-    await bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=text,
-    )
-    log.info("Sent weekly leaderboard.")
 
 async def send_daily_report(bot: Bot):
     scheduled_practices, summary, report_start_iso, report_end_iso = get_daily_summary()
@@ -222,11 +203,13 @@ async def send_daily_report(bot: Bot):
         report_start_iso, report_end_iso, scheduled_practices,
     )
 
+    # `sorted_users` already comes in marks-desc, name-asc order.
+    # We just walk it and emit each user's block in that ranking.
     report = "Daily Report:\n\n━━━━━━━━━━\n"
 
-    for full_name in sorted(summary):
+    for rank, (full_name, marks) in enumerate(sorted_users, start=1):
         user_streaks = streaks_by_user.get(full_name, {})
-        report += f"{full_name} (Marks {user_marks[full_name]}/{full_marks})\n"
+        report += f"{rank}. {full_name} (Marks {marks}/{full_marks})\n"
         for practice in scheduled_practices:
             label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
@@ -241,32 +224,7 @@ async def send_daily_report(bot: Bot):
         chat_id=GROUP_CHAT_ID,
         text=report,
     )
-
-    await send_daily_leaderboard(bot, sorted_users, full_marks)
     log.info("Sent daily report.")
-
-
-async def send_daily_leaderboard(bot: Bot, sorted_users: list, full_marks: int):
-    """Send a separate leaderboard message after the daily report."""
-    if not sorted_users:
-        return
-
-    # Combined ranking: ties share the same position number.
-    last_score = None
-    last_pos = 0
-    board_lines: list[str] = []
-    for idx, (name, score) in enumerate(sorted_users, start=1):
-        if score != last_score:
-            last_pos = idx
-            last_score = score
-        board_lines.append(f"{last_pos}. {name} ({score}/{full_marks})")
-
-    text = "Daily Leaderboard:\n━━━━━━━━━\n" + "\n".join(board_lines)
-    await bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=text,
-    )
-    log.info("Sent daily leaderboard.")
 
 
 async def send_prayer_ayah(bot: Bot, prayer_name: str):
