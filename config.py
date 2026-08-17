@@ -31,8 +31,12 @@ except ImportError:
 
 TOKEN = os.getenv("BOT_TOKEN", "")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
-DB_PATH = os.getenv("DB_PATH", "dhikr_records.db")
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
+
+# Supabase REST endpoint and the service-role / secret key.
+# The service-role key bypasses RLS so we don't need any policy setup.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY", "")
 
 RESPONSE_WINDOW_HOURS = 24
 RESPONSE_DELETE_AFTER_SECONDS = 10

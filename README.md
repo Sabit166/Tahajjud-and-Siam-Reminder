@@ -9,7 +9,7 @@ The bot is split into focused modules instead of one large script:
 | `main.py` | Entrypoint — wires everything together and starts polling |
 | `config.py` | Env loading, settings/constants, logging setup |
 | `practices.py` | Static data: practice definitions, labels, poll options |
-| `db.py` | SQLite connection, schema, active-poll tracking, response/report queries |
+| `db.py` | Supabase (PostgREST) client: schema, active-poll tracking, response/report queries |
 | `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
 | `messaging.py` | Builds and sends check-in polls and daily/weekly reports |
 | `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
@@ -18,7 +18,7 @@ The bot is split into focused modules instead of one large script:
 
 ## Run locally
 
-1. Fill in `.env` with your Telegram bot token and group chat ID.
+1. Fill in `.env` with your Telegram bot token, group chat ID, and your Supabase URL/key (see the next section).
 2. Install dependencies:
 
 ```powershell
@@ -31,9 +31,45 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Database: Supabase (PostgreSQL)
+
+The bot stores all check-in history, active polls, and streaks in a **Supabase** project. This replaces the old SQLite file so data survives across redeploys. There is no local DB file anywhere in the project.
+
+### One-time setup
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the Supabase dashboard, open **Project Settings -> API** and copy:
+   - **Project URL** — set as `SUPABASE_URL` in `.env`
+   - **service_role / secret key** — set as `SUPABASE_API_KEY` in `.env`
+   - (The service-role key bypasses Row Level Security and is required for the bot to read/write all tables.)
+3. Open the **SQL Editor** in the Supabase dashboard and paste the contents of `supabase_schema.sql`, then run it. This creates the three tables, indexes, and a trigger.
+
+### Required `.env` keys
+
+```env
+BOT_TOKEN=your_telegram_bot_token
+GROUP_CHAT_ID=-1001234567890
+BD_TZ=Asia/Dhaka
+SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
+SUPABASE_API_KEY=sb_secret_...your_service_role_key...
+```
+
+### Security note
+
+`SUPABASE_API_KEY` is a **service-role** key — anyone who has it can read, modify, or delete every row in your database. Treat it like a database password:
+
+- Never commit `.env` to git (already in `.gitignore`).
+- Never paste it into chats, tickets, or screenshots.
+- For production, prefer storing it in a secret manager (Railway/Render/Oracle env vars) rather than a file on disk.
+- If you ever leak it, rotate it immediately from the Supabase dashboard.
+
+### Schema migrations
+
+If you change `db.py` in a way that needs new tables or columns, edit `supabase_schema.sql` and run the new statements in the SQL editor. The existing bot does not auto-migrate.
+
 ## Run with Docker
 
-1. Make sure `.env` contains valid values for `BOT_TOKEN` and `GROUP_CHAT_ID`.
+1. Make sure `.env` contains valid values for `BOT_TOKEN`, `GROUP_CHAT_ID`, `SUPABASE_URL`, and `SUPABASE_API_KEY`.
 2. Build and start the container:
 
 ```powershell
@@ -46,17 +82,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-The SQLite database is stored in `./data/dhikr_records.db` on the host.
-
-### Data persistence across redeploys
-
-`./data` is a **bind mount** (see `docker-compose.yml`), so it lives on the host filesystem, completely separate from the git repo and the Docker image. Pulling the latest commit and running `docker compose up -d --build` only rebuilds the app code — it never touches `./data`, so your check-in history is safe across redeploys.
-
-Make sure `data/` and `.env` are listed in `.gitignore` (included in this repo) so they're never committed or clobbered by a `git pull`. The only things that *would* wipe the database are:
-
-- Running `docker compose down -v` (the `-v` flag deletes volumes)
-- Manually deleting the `./data` folder
-- Deploying to a host without persistent disk (see the Railway section below)
+There is no local database file or volume — all data lives in Supabase and survives container rebuilds.
 
 ## Deploy on Oracle Cloud Free Tier
 
@@ -106,7 +132,8 @@ Create or edit `.env` on the VM so it contains your real values:
 BOT_TOKEN=your_telegram_bot_token
 GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
-DB_PATH=/data/dhikr_records.db
+SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
+SUPABASE_API_KEY=sb_secret_...your_service_role_key...
 ```
 
 ### 6. Start the bot
@@ -126,11 +153,11 @@ The `restart: unless-stopped` setting in `docker-compose.yml` makes Docker bring
 
 - You do not need to open any public application port for this bot because it uses Telegram polling.
 - Only SSH access is required for administration.
-- The SQLite database is persisted in the `data` folder mounted into the container.
+- Database storage is handled by Supabase, so there is nothing to back up locally.
 
 ## Deploy on Railway
 
-Railway can run this bot from the included `Dockerfile`, but there is one important detail: the bot uses SQLite, so you need persistent storage for `DB_PATH` or your database can be lost on redeploys.
+Railway can run this bot from the included `Dockerfile`. Because the database is now Supabase (managed, external), there is no persistent-volume concern — every redeploy starts with the same data.
 
 ### Recommended setup
 
@@ -144,15 +171,11 @@ Railway can run this bot from the included `Dockerfile`, but there is one import
 BOT_TOKEN=your_telegram_bot_token
 GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
-DB_PATH=/data/dhikr_records.db
+SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
+SUPABASE_API_KEY=sb_secret_...your_service_role_key...
 ```
 
-6. If Railway offers a persistent volume for your plan, mount it at `/data` so the SQLite file survives restarts.
-7. Deploy the service.
-
-### If Railway volume support is not available
-
-Use Railway PostgreSQL instead of SQLite, or move to a host that supports persistent disk. Without persistent storage, the bot will still run, but your check-in history can disappear when Railway recreates the container.
+6. Deploy the service. Railway will rebuild on every push.
 
 ### What to expect
 
@@ -166,8 +189,8 @@ On a server you manage yourself (e.g. the Oracle Cloud VM above), you can automa
 
 - Fetches and resets to the latest commit on `origin/main`
 - Only rebuilds the Docker image if a new commit was actually pulled
-- Never touches `./data`, since it's a bind mount outside the git repo (see [Data persistence across redeploys](#data-persistence-across-redeploys))
 - Logs its output to `deploy.log` in the project directory
+- The database is in Supabase, so the deploy script never touches local storage
 
 ### 1. Make the script executable
 
