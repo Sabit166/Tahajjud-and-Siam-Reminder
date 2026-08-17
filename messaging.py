@@ -1,9 +1,10 @@
 """
 Message senders: check-in polls, nightly amal batch, daily and weekly
-reports.
+reports, and the per-prayer Qur'an ayah reminder.
 """
 
 import asyncio
+import datetime as _dt
 
 from telegram import Bot
 
@@ -11,6 +12,7 @@ from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, DAILY_REPORT_HOUR, DAIL
 from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
 from scheduling import schedule_poll_close
+from quran import fetch_quran_ayah, format_ayah_message
 
 # ============================================================
 #  MESSAGE SENDERS & POLL CLOSING
@@ -265,3 +267,61 @@ async def send_daily_leaderboard(bot: Bot, sorted_users: list, full_marks: int):
         text=text,
     )
     log.info("Sent daily leaderboard.")
+
+
+async def send_prayer_ayah(bot: Bot, prayer_name: str):
+    """Send the Ayah-of-the-Hour reminder for a given prayer.
+
+    Called by ``prayer_ayah_poll_job`` (see ``scheduler.py``) when the
+    poll loop detects that ``prayer_name`` has just started.
+    """
+    try:
+        bundle = await fetch_quran_ayah()
+    except Exception as exc:  # network or parsing issue
+        log.exception("Failed to fetch Quran ayah for %s: %s", prayer_name, exc)
+        return
+    text = format_ayah_message(prayer_name, bundle)
+    await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+    log.info("Sent Ayah of the Hour for %s.", prayer_name)
+
+
+# --------------------------------------------------------------------
+#  Prayer-time polling loop
+# --------------------------------------------------------------------
+#
+# Aladhan's timingsByCity returns *today's* times, so they change day
+# to day and the JobQueue's run_daily (fixed clock-time) does not fit
+# this use case. Instead, ``setup_scheduler`` registers a single
+# repeating job that fires every 5 minutes; on each tick it checks
+# which of the 5 prayers has just started (within the last 5 min) and
+# dispatches one ayah reminder per prayer per day.
+
+_PRAYERS = ("fajr", "dhuhr", "asr", "maghrib", "isha")
+_DISPATCHED_TODAY: set[tuple[str, _dt.date]] = set()
+
+
+async def _prayer_ayah_poll_tick(context):
+    """Runs every 5 minutes; dispatches ayah reminders at prayer times."""
+    from quran import fetch_prayer_times, dt_with_tz  # local import for clarity
+
+    now = _dt.datetime.now(BD_TZ)
+    today = now.date()
+
+    # Reset dispatched tracker across days so the same prayer fires
+    # again tomorrow.
+    _DISPATCHED_TODAY.clear()
+
+    try:
+        timings = await fetch_prayer_times()
+    except Exception as exc:
+        log.warning("Prayer-time fetch failed; will retry next tick: %s", exc)
+        return
+
+    for prayer in _PRAYERS:
+        prayer_at = dt_with_tz(getattr(timings, prayer), base=today)
+        delta = (now - prayer_at).total_seconds()
+        # 0 <= delta < 300 means the prayer started within the last 5 min
+        if 0 <= delta < 300 and (prayer, today) not in _DISPATCHED_TODAY:
+            _DISPATCHED_TODAY.add((prayer, today))
+            log.info("Dispatching Ayah reminder for %s at %s", prayer, now)
+            await send_prayer_ayah(context.bot, prayer)

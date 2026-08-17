@@ -14,6 +14,7 @@ from jobs import (
     send_weekly_report_job,
     send_daily_report_job,
     send_jumuah_reminder_job,
+    prayer_ayah_poll_job,
 )
 
 # ============================================================
@@ -136,6 +137,16 @@ def setup_scheduler(app: Application):
         time=datetime.time(hour=22, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         name="nightly_amal",
+    )
+
+    # Ayah-of-the-Hour prayer-time poll — every 5 minutes the bot
+    # re-fetches Aladhan's prayer times and dispatches one ayah reminder
+    # per prayer per day (see messaging._prayer_ayah_poll_tick).
+    job_queue.run_repeating(
+        prayer_ayah_poll_job,
+        interval=datetime.timedelta(minutes=5),
+        first=10,  # seconds after scheduler starts
+        name="prayer_ayah_poll",
     )
 
     log.info("Scheduler started. All jobs are active.")
