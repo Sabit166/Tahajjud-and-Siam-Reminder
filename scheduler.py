@@ -123,6 +123,16 @@ def setup_scheduler(app: Application):
         name="daily_report",
     )
 
+    # One-shot: catch-up daily report for today, 19:30 BD.
+    # Safe to remove this block after the missed-day is delivered.
+    job_queue.run_once(
+        send_daily_report_job,
+        when=datetime.datetime.now(BD_TZ).replace(
+            hour=19, minute=30, second=0, microsecond=0
+        ),
+        name="daily_report_catchup_2026_08_19",
+    )
+
     # Weekly Report - Fridays at 6:30 PM
     job_queue.run_daily(
         send_weekly_report_job,

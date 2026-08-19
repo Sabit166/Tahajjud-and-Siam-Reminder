@@ -112,6 +112,56 @@ def _report_label(practice: str) -> str:
     return p_info.get("label", practice)
 
 
+# Telegram caps send_message at 4096 chars. We split a long report by
+# packing whole user-blocks into messages that stay under the cap.
+TG_MAX_LEN = 4000  # leave headroom for headers and trailing whitespace
+
+
+def _chunk_blocks(title: str, header_separator: str, blocks: list[str]) -> list[str]:
+    """Pack `blocks` into one-or-more messages under Telegram's char cap.
+
+    Each message is prefixed with ``"<title> (i/N):\n"`` (or just the
+    title when there's only one chunk). A block is never split — if a
+    single block is larger than the cap it goes out on its own and we
+    log a warning so it can be fixed in source.
+    """
+    if not blocks:
+        return [f"{title}:\n\n{header_separator}No data."]
+
+    # Peek at total length once. If it fits, no header suffix needed.
+    total = sum(len(b) for b in blocks)
+    if total <= TG_MAX_LEN:
+        return [f"{title}:\n\n{header_separator}" + "".join(blocks).rstrip("\n")]
+
+    # Need multi-message. Greedily pack blocks while each message stays
+    # under the cap; we leave room for "(i/N)" header plus separator.
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    current_len = 0
+    n = len(blocks)
+    for blk in blocks:
+        if len(blk) > TG_MAX_LEN:
+            log.warning("Block of %d chars exceeds Telegram limit; sending as-is.", len(blk))
+        # Worst-case header: "(99/99):\n\n" + separator ~= 16 chars
+        budget = TG_MAX_LEN - 16 - len(header_separator)
+        if current and current_len + len(blk) > budget:
+            chunks.append(current)
+            current = [blk]
+            current_len = len(blk)
+        else:
+            current.append(blk)
+            current_len += len(blk)
+    if current:
+        chunks.append(current)
+
+    n_chunks = len(chunks)
+    out: list[str] = []
+    for i, c in enumerate(chunks, start=1):
+        head = f"{title} ({i}/{n_chunks}):\n\n{header_separator}"
+        out.append(head + "".join(c).rstrip("\n"))
+    return out
+
+
 async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()
     if not rows:
@@ -154,25 +204,25 @@ async def send_weekly_report(bot: Bot):
         key=lambda kv: (-kv[1], kv[0]),
     )
 
-    report = "Weekly Report:\n\n━━━━━━━━━━\n"
-
+    blocks: list[str] = []
     for rank, (full_name, marks) in enumerate(sorted_users, start=1):
-        report += f"{rank}. {full_name} (Marks {marks}/{user_max_marks[full_name]})\n"
+        block = f"{rank}. {full_name} (Marks {marks}/{user_max_marks[full_name]})\n"
         for practice, completed in sorted(user_data[full_name].items()):
             label = _report_label(practice)
             max_n = WEEKLY_MAX.get(practice, 7)
             bar = "🟩" * completed + "⬜" * max(0, max_n - completed)
-            report += f"  -- {label}:\n"
-            report += f"  {bar} {completed}/{max_n}\n"
-        report += "━━━━━━━━━━\n"
+            block += f"  -- {label}:\n"
+            block += f"  {bar} {completed}/{max_n}\n"
+        block += "━━━━━━━━━━\n"
+        blocks.append(block)
 
-    report = report.rstrip("\n")
-
-    await bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=report,
-    )
-    log.info("Sent weekly report.")
+    chunks = _chunk_blocks("Weekly Report", "━━━━━━━━━━\n", blocks)
+    for chunk in chunks:
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=chunk,
+        )
+    log.info("Sent weekly report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
 
 async def send_daily_report(bot: Bot):
     scheduled_practices, summary, report_start_iso, report_end_iso = get_daily_summary()
@@ -203,28 +253,29 @@ async def send_daily_report(bot: Bot):
         report_start_iso, report_end_iso, scheduled_practices,
     )
 
-    # `sorted_users` already comes in marks-desc, name-asc order.
-    # We just walk it and emit each user's block in that ranking.
-    report = "Daily Report:\n\n━━━━━━━━━━\n"
-
+    # Build one block per user (never split a user across messages),
+    # then pack blocks into messages that stay under Telegram's 4096-char
+    # limit. Each message gets a "(i/N)" header.
+    blocks: list[str] = []
     for rank, (full_name, marks) in enumerate(sorted_users, start=1):
         user_streaks = streaks_by_user.get(full_name, {})
-        report += f"{rank}. {full_name} (Marks {marks}/{full_marks})\n"
+        block = f"{rank}. {full_name} (Marks {marks}/{full_marks})\n"
         for practice in scheduled_practices:
             label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
             mark = "✅" if did_it else "❌"
             streak_n = user_streaks.get(practice, 0)
-            report += f"  -- {label}: {mark} ({streak_n})\n"
-        report += "━━━━━━━━━━\n"
+            block += f"  -- {label}: {mark} ({streak_n})\n"
+        block += "━━━━━━━━━━\n"
+        blocks.append(block)
 
-    report = report.rstrip("\n")
-
-    await bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=report,
-    )
-    log.info("Sent daily report.")
+    chunks = _chunk_blocks("Daily Report", "━━━━━━━━━━\n", blocks)
+    for chunk in chunks:
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=chunk,
+        )
+    log.info("Sent daily report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
 
 
 async def send_prayer_ayah(bot: Bot, prayer_name: str):
