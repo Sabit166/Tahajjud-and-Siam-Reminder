@@ -126,11 +126,11 @@ def setup_scheduler(app: Application):
         name="daily_report",
     )
 
-    # Ayyam al-Bid (Ayyam-E-Beej) Reminder - Daily check at 9:30 PM
+    # Ayyam al-Bid (Ayyam-E-Beej) Reminder - Daily check at 10:15 PM
     # (fires on the 12th night of the Hijri month)
     job_queue.run_daily(
         send_ayyam_beej_reminder_job,
-        time=datetime.time(hour=21, minute=30, tzinfo=BD_TZ),
+        time=datetime.time(hour=22, minute=15, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         name="ayyam_beej_reminder",
     )
