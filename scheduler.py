@@ -55,8 +55,8 @@ def setup_scheduler(app: Application):
         send_checkin_job,
         time=datetime.time(hour=10, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
-        data="quran_page",
-        name="quran_page",
+        data="quran",
+        name="quran",
     )
     job_queue.run_daily(
         send_checkin_job,
