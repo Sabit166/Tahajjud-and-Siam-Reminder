@@ -2,11 +2,13 @@
 Static definitions of the practices (amal) tracked by the bot.
 """
 
+from __future__ import annotations
+
 PRACTICES = {
     "morning_dhikr":  {"label": "Morning Adhkar",  "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
     "fazr_jamaat":   {"label": "Fazr Jamaat",      "poll_options": ["Alhamdulillah, done", "Missed Jamaat"]},
     "ishraq_salat":   {"label": "Ishraq Salat",      "poll_options": ["Alhamdulillah, done", "Missed"]},
-    "salatud_duha":   {"label": "Salatud Duha",      "poll_options": ["Alhamdulillah, done", "Missed"]},
+    "quran_page":     {"label": "Read 1 page of the Quran", "poll_options": ["Alhamdulillah, done", "Missed"]},
     "evening_dhikr":  {"label": "Evening Adhkar",  "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
     "salawat_on_rasulullah": {"label": "Salawat on Rasulullah", "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"]},
     "sawm":           {"label": "Sawm",           "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"]},
@@ -41,7 +43,7 @@ GROUP_AMAL_LABELS = [
     "Morning Adhkar",
     "Fazr Jamaat",
     "Ishraq Salat",
-    "Salatud Duha",
+    "Read 1 page of the Quran",
     "Evening Adhkar",
     "Salawat on Rasulullah",
     "Sawm",

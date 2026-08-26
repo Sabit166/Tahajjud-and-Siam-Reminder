@@ -3,16 +3,27 @@ Message senders: check-in polls, nightly amal batch, daily and weekly
 reports, and the per-prayer Qur'an ayah reminder.
 """
 
+from __future__ import annotations
+
 import asyncio
 import datetime as _dt
 
 from telegram import Bot
 
+import httpx
+
 from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, BD_TZ, log
 from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
 from scheduling import schedule_poll_close
-from quran import fetch_quran_ayah, format_ayah_message
+from quran import (
+    fetch_quran_ayah,
+    format_ayah_message,
+    ALADHAN_BASE,
+    DEFAULT_CITY,
+    DEFAULT_COUNTRY,
+    DEFAULT_METHOD,
+)
 
 # ============================================================
 #  MESSAGE SENDERS & POLL CLOSING
@@ -101,6 +112,165 @@ async def send_jumuah_reminder(bot: Bot):
                 parse_mode="Markdown",
             )
     log.info("Sent Yaum al-Jumu'ah sunnah reminder.")
+
+
+# ============================================================
+#  AYYAM AL-BID (AYYAM-E-BEEJ) FASTING REMINDER
+# ============================================================
+
+HIJRI_MONTHS = [
+    "Muharram", "Safar", "Rabi' al-Awwal", "Rabi' al-Thani",
+    "Jumada al-Awwal", "Jumada al-Thani", "Rajab", "Sha'ban",
+    "Ramadan", "Shawwal", "Dhu al-Qi'dah", "Dhu al-Hijjah"
+]
+
+
+def _calculate_tabular_hijri(date: _dt.date) -> dict:
+    """Tabular Islamic calendar algorithm fallback if API is unavailable."""
+    year, month, day = date.year, date.month, date.day
+    if month <= 2:
+        year -= 1
+        month += 12
+    a = year // 100
+    b = 2 - a + (a // 4)
+    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524
+
+    l = jd - 1948440 + 10632
+    n = (l - 1) // 10631
+    l = l - 10631 * n + 354
+    j = ((10985 - l) // 5316) * ((50 * l) // 17719) + (l // 5670) * ((43 * l) // 15238)
+    l = l - ((30 - j) // 15) * ((17719 * j) // 50) - (j // 16) * ((15238 * j) // 43) + 29
+    m = (24 * l) // 709
+    d = l - (709 * m) // 24
+    y = 30 * n + j - 30
+    month_name = HIJRI_MONTHS[m - 1] if 1 <= m <= 12 else f"Month {m}"
+    return {
+        "day": int(d),
+        "month_number": int(m),
+        "month_en": month_name,
+        "year": int(y),
+    }
+
+
+async def fetch_hijri_date(
+    date: _dt.date | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> dict:
+    """
+    Fetch the Hijri date for the given Gregorian date (defaults to today in BD_TZ).
+    Uses Aladhan API with an offline tabular algorithm fallback.
+    """
+    when = date or _dt.datetime.now(BD_TZ).date()
+    url = f"{ALADHAN_BASE}/timingsByCity/{when.isoformat()}"
+    params = {"city": DEFAULT_CITY, "country": DEFAULT_COUNTRY, "method": DEFAULT_METHOD}
+
+    own_client = client is None
+    client = client or httpx.AsyncClient(timeout=15.0)
+    try:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        hijri_data = data.get("data", {}).get("date", {}).get("hijri", {})
+        day_str = hijri_data.get("day", "0")
+        month_en = hijri_data.get("month", {}).get("en", "Islamic Month")
+        month_num = hijri_data.get("month", {}).get("number", 1)
+        year_str = hijri_data.get("year", "1448")
+        return {
+            "day": int(day_str),
+            "month_number": int(month_num),
+            "month_en": month_en,
+            "year": int(year_str),
+        }
+    except Exception as exc:
+        log.warning("Aladhan Hijri fetch failed (%s); using tabular fallback calculation.", exc)
+        return _calculate_tabular_hijri(when)
+    finally:
+        if own_client:
+            await client.aclose()
+
+
+def _format_ayyam_beej_message(hijri: dict) -> str:
+    """Build the decorated Ayyam al-Bid (13, 14, 15) fasting reminder text."""
+    month_en = hijri.get("month_en", "this Islamic month")
+    year = hijri.get("year", "")
+    year_str = f" ({year} AH)" if year else ""
+
+    head = (
+        "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌕 *Ayyam al-Bid (Ayyam-E-Beej) Fasting Reminder* 🌕\n"
+        f"*13th, 14th & 15th of {month_en}{year_str}*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Assalamu Alaikum wa Rahmatullahi wa Barakatuh,\n\n"
+        f"Tomorrow begins the blessed *Three White Days (Ayyam al-Bid)* for the month of *{month_en}*.\n\n"
+        "📅 *Fasting Schedule:*\n"
+        f"  • *13th {month_en}* (Tomorrow)\n"
+        f"  • *14th {month_en}*\n"
+        f"  • *15th {month_en}*\n\n"
+        "📜 *Virtues of Fasting Ayyam al-Bid:*\n"
+        "📖 Abu Hurairah (رضي الله عنه) reported:\n"
+        "  _\"My beloved (the Prophet ﷺ) advised me to do three things: to fast three days of each month, to pray two rak'ahs of Duha, and to pray Witr before going to sleep.\"_\n"
+        "  — *Sahih al-Bukhari (1981), Sahih Muslim (721)*\n\n"
+        "📖 The Messenger of Allah ﷺ said:\n"
+        "  _\"Fasting three days of every month is equivalent to fasting for a lifetime.\"_\n"
+        "  — *Sahih al-Bukhari (1979), Sahih Muslim (1159)*\n\n"
+        "📖 Abu Dharr (رضي الله عنه) narrated that the Prophet ﷺ said:\n"
+        "  _\"O Abu Dharr! If you fast three days of a month, then fast the 13th, 14th, and 15th.\"_\n"
+        "  — *Jami' at-Tirmidhi (761), Sunan an-Nasa'i (2424)*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 *Gentle Reminders:*\n"
+        "  1. Make your intention (*Niyyah*) tonight for fasting for the sake of Allah.\n"
+        "  2. Wake up for *Suhoor* — indeed there is barakah in Suhoor.\n"
+        "  3. Encourage your family and friends to fast together.\n\n"
+        "May Allah accept our fasting, forgive our sins, and grant us steadfastness. Ameen.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return head
+
+
+async def send_ayyam_beej_reminder(bot: Bot, hijri_info: dict | None = None):
+    """Send the Ayyam al-Bid (13, 14, 15) fasting reminder to the group."""
+    if hijri_info is None:
+        hijri_info = await fetch_hijri_date()
+    text = _format_ayyam_beej_message(hijri_info)
+    if len(text) <= 4096:
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=text,
+            parse_mode="Markdown",
+        )
+    else:
+        first = text[:4000]
+        rest = text[4000:]
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=first,
+            parse_mode="Markdown",
+        )
+        if rest:
+            await bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=rest,
+                parse_mode="Markdown",
+            )
+    log.info("Sent Ayyam al-Bid (Ayyam-E-Beej) reminder for %s %s.", hijri_info.get("month_en"), hijri_info.get("year"))
+
+
+async def check_and_send_ayyam_beej_reminder(bot: Bot, force: bool = False):
+    """
+    Check if today is the 12th day of the Hijri month at 9:30 PM BD time.
+    If today is the 12th (the eve of the 13th fast), send the Ayyam al-Bid reminder.
+    """
+    now = _dt.datetime.now(BD_TZ)
+    hijri = await fetch_hijri_date(now.date())
+    log.info("Ayyam-E-Beej check: Hijri date is day %s of %s (%s)", hijri["day"], hijri["month_en"], hijri["year"])
+
+    if force or hijri["day"] == 12:
+        log.info("Day %s matches 12th Hijri. Dispatching Ayyam al-Bid reminder!", hijri["day"])
+        await send_ayyam_beej_reminder(bot, hijri)
+    else:
+        log.info("Hijri day is %s (not 12). Skipping Ayyam-E-Beej reminder.", hijri["day"])
+
 
 def _report_label(practice: str) -> str:
     """Return the display label used in reports."""

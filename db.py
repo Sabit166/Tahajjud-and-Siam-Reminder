@@ -11,6 +11,8 @@ Tables (created by supabase_schema.sql):
     streaks       -- one row per (user_id, practice)
 """
 
+from __future__ import annotations
+
 import datetime
 from typing import Optional
 
@@ -240,7 +242,7 @@ def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]], str, str]
     if report_start.weekday() == 3:    # Thursday
         scheduled_practices.append("surah_kahf")
     scheduled_practices.extend(
-        ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "salatud_duha", "istighfar_100x"]
+        ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "quran_page", "istighfar_100x"]
     )
     if report_end.weekday() in (0, 3):  # Sun, Thu
         scheduled_practices.append("sawm")
@@ -466,6 +468,7 @@ WEEKLY_MAX: dict[str, int] = {
     "morning_dhikr": 7,
     "fazr_jamaat": 7,
     "ishraq_salat": 7,
+    "quran_page": 7,
     "salatud_duha": 7,
     "evening_dhikr": 7,
     "salawat_on_rasulullah": 7,

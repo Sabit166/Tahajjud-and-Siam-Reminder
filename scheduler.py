@@ -3,6 +3,8 @@ Registers all recurring JobQueue jobs: practice check-in polls, daily
 and weekly reports, and the nightly amal batch.
 """
 
+from __future__ import annotations
+
 import datetime
 
 from telegram.ext import Application
@@ -14,6 +16,7 @@ from jobs import (
     send_weekly_report_job,
     send_daily_report_job,
     send_jumuah_reminder_job,
+    send_ayyam_beej_reminder_job,
     prayer_ayah_poll_job,
 )
 
@@ -52,8 +55,8 @@ def setup_scheduler(app: Application):
         send_checkin_job,
         time=datetime.time(hour=10, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
-        data="salatud_duha",
-        name="salatud_duha",
+        data="quran_page",
+        name="quran_page",
     )
     job_queue.run_daily(
         send_checkin_job,
@@ -123,14 +126,13 @@ def setup_scheduler(app: Application):
         name="daily_report",
     )
 
-    # One-shot: catch-up daily report for today, 19:30 BD.
-    # Safe to remove this block after the missed-day is delivered.
-    job_queue.run_once(
-        send_daily_report_job,
-        when=datetime.datetime.now(BD_TZ).replace(
-            hour=19, minute=30, second=0, microsecond=0
-        ),
-        name="daily_report_catchup_2026_08_19",
+    # Ayyam al-Bid (Ayyam-E-Beej) Reminder - Daily check at 9:30 PM
+    # (fires on the 12th night of the Hijri month)
+    job_queue.run_daily(
+        send_ayyam_beej_reminder_job,
+        time=datetime.time(hour=21, minute=30, tzinfo=BD_TZ),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        name="ayyam_beej_reminder",
     )
 
     # Weekly Report - Fridays at 6:30 PM

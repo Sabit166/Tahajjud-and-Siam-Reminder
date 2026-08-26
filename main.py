@@ -3,6 +3,8 @@
 #  Built for your Islamic accountability group
 # ============================================================
 
+from __future__ import annotations
+
 from telegram.ext import Application, MessageHandler, PollAnswerHandler, filters
 
 from config import TOKEN, GROUP_CHAT_ID, SUPABASE_URL, SUPABASE_API_KEY, log

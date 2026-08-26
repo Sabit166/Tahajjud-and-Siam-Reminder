@@ -3,6 +3,8 @@ Telegram update handlers: processing poll answers and welcoming new
 group members.
 """
 
+from __future__ import annotations
+
 from telegram import Update
 from telegram.ext import ContextTypes
 

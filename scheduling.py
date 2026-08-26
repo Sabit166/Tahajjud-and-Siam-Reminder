@@ -4,6 +4,8 @@ message to be deleted after a delay, and the job callbacks that perform
 those actions.
 """
 
+from __future__ import annotations
+
 import datetime
 from typing import Any, cast
 

@@ -11,10 +11,11 @@ The bot is split into focused modules instead of one large script:
 | `practices.py` | Static data: practice definitions, labels, poll options |
 | `db.py` | Supabase (PostgREST) client: schema, active-poll tracking, response/report queries |
 | `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
-| `messaging.py` | Builds and sends check-in polls and daily/weekly reports |
+| `messaging.py` | Builds and sends check-in polls, reports, and Ayyam-E-Beej/Jumu'ah reminders |
 | `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
 | `handlers.py` | Telegram update handlers (poll answers, new member welcome) |
 | `scheduler.py` | Registers all recurring jobs (`setup_scheduler`) |
+| `send_now.py` | CLI tool to manually dispatch any poll or reminder on-demand |
 
 ## Run locally
 
@@ -29,6 +30,24 @@ pip install -r requirements.txt
 
 ```powershell
 python main.py
+```
+
+### Trigger Polls / Reminders Manually
+
+You can dispatch any poll or reminder immediately from your terminal without waiting for the scheduler:
+
+```bash
+# Send "Read 1 page of the Quran" poll
+python send_now.py quran_page
+
+# Send Ayyam al-Bid (Ayyam-E-Beej) fasting reminder
+python send_now.py ayyam_beej
+
+# Send Tahajjud poll
+python send_now.py tahajjud
+
+# List all available actions
+python send_now.py --list
 ```
 
 ## Database: Supabase (PostgreSQL)

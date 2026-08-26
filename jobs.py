@@ -4,6 +4,8 @@ schedule. See scheduling.py for the poll-close/message-delete job
 callbacks.
 """
 
+from __future__ import annotations
+
 from typing import cast
 
 from telegram.ext import ContextTypes
@@ -14,6 +16,7 @@ from messaging import (
     send_weekly_report,
     send_daily_report,
     send_jumuah_reminder,
+    check_and_send_ayyam_beej_reminder,
     _prayer_ayah_poll_tick,
 )
 
@@ -41,26 +44,11 @@ async def send_jumuah_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     await send_jumuah_reminder(context.bot)
 
 
+async def send_ayyam_beej_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    await check_and_send_ayyam_beej_reminder(context.bot)
+
+
 async def prayer_ayah_poll_job(context: ContextTypes.DEFAULT_TYPE):
     """Every-5-minute tick that dispatches Ayah-of-the-Hour reminders
     at each of the 5 prayer times. See ``messaging._prayer_ayah_poll_tick``."""
     await _prayer_ayah_poll_tick(context)
-
-
-async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    if job is None:
-        return
-    await send_checkin(context.bot, cast(str, job.data), context.job_queue)
-
-async def send_nightly_amal_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_nightly_amal(context.bot, context.job_queue)
-
-async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_weekly_report(context.bot)
-
-async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_daily_report(context.bot)
-
-async def send_jumuah_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_jumuah_reminder(context.bot)
