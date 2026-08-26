@@ -265,7 +265,7 @@ async def check_and_send_ayyam_beej_reminder(bot: Bot, force: bool = False):
     hijri = await fetch_hijri_date(now.date())
     log.info("Ayyam-E-Beej check: Hijri date is day %s of %s (%s)", hijri["day"], hijri["month_en"], hijri["year"])
 
-    if force or hijri["day"] == 12:
+    if force or hijri["day"] == 13:
         log.info("Day %s matches 12th Hijri. Dispatching Ayyam al-Bid reminder!", hijri["day"])
         await send_ayyam_beej_reminder(bot, hijri)
     else:
