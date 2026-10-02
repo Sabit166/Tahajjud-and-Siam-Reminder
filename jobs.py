@@ -12,10 +12,6 @@ from telegram.ext import ContextTypes
 
 from messaging import (
     send_checkin,
-    send_nightly_amal,
-    send_weekly_report,
-    send_daily_report,
-    send_jumuah_reminder,
     _prayer_schedule_tick,
     _prayer_ayah_poll_tick,
 )
@@ -26,22 +22,6 @@ async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
     if job is None:
         return
     await send_checkin(context.bot, cast(str, job.data), context.job_queue)
-
-
-async def send_nightly_amal_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_nightly_amal(context.bot, context.job_queue)
-
-
-async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_weekly_report(context.bot)
-
-
-async def send_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_daily_report(context.bot)
-
-
-async def send_jumuah_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    await send_jumuah_reminder(context.bot)
 
 
 async def prayer_ayah_poll_job(context: ContextTypes.DEFAULT_TYPE):

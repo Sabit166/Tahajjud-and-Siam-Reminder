@@ -10,9 +10,7 @@ import datetime as _dt
 
 from telegram import Bot
 
-import httpx
-
-from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, BD_TZ, log
+from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, BD_TZ, log
 from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
 from scheduling import schedule_poll_close
@@ -380,7 +378,7 @@ async def _prayer_schedule_tick(context):
             ("weekly_report", maghrib + _dt.timedelta(minutes=5)),
         ])
     if today.weekday() == 3:
-        events.append(("jumuah_reminder", maghrib + _dt.timedelta(minutes=30)))
+        events.append(("jumuah_reminder", maghrib + _dt.timedelta(minutes=10)))
 
     for event, event_at in events:
         await _dispatch_scheduled_event(context, event, event_at)
@@ -401,7 +399,10 @@ async def _prayer_ayah_poll_tick(context):
 
     # Reset dispatched tracker across days so the same prayer fires
     # again tomorrow.
-    _DISPATCHED_TODAY.clear()
+    cutoff = today - _dt.timedelta(days=2)
+    _DISPATCHED_TODAY.difference_update(
+        {key for key in _DISPATCHED_TODAY if key[1] < cutoff}
+    )
 
     try:
         timings = await fetch_prayer_times()

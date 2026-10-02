@@ -15,7 +15,7 @@ import sys
 
 from telegram import Bot
 
-from config import TOKEN, GROUP_CHAT_ID, log
+from config import TOKEN, GROUP_CHAT_ID
 from practices import PRACTICES
 from messaging import (
     send_checkin,
@@ -35,7 +35,7 @@ SPECIAL_ACTIONS = {
 }
 
 
-async def main_async(target: str, force: bool = False):
+async def main_async(target: str):
     if not TOKEN:
         print("ERROR: BOT_TOKEN is not set in your .env file or environment!", file=sys.stderr)
         sys.exit(1)

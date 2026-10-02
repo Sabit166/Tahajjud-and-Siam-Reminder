@@ -12,9 +12,6 @@ from telegram.ext import Application
 from config import BD_TZ, log
 from jobs import (
     send_checkin_job,
-    send_weekly_report_job,
-    send_daily_report_job,
-    send_jumuah_reminder_job,
     prayer_schedule_job,
     prayer_ayah_poll_job,
 )

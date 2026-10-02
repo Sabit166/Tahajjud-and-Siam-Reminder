@@ -244,7 +244,7 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
     scheduled_practices.extend(
         ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "quran", "istighfar_100x"]
     )
-    if report_end.weekday() in (0, 3):  # Sun, Thu
+    if report_end.weekday() in (0, 3):  # Monday, Thursday
         scheduled_practices.append("sawm")
 
     try:

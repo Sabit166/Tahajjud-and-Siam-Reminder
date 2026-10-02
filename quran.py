@@ -14,7 +14,6 @@ APIs used:
 
 from __future__ import annotations
 
-import asyncio
 import datetime as _dt
 from dataclasses import dataclass
 from typing import Optional
@@ -25,11 +24,6 @@ from config import BD_TZ, log
 
 ALADHAN_BASE = "https://api.aladhan.com/v1"
 QURAN_CLOUD_BASE = "https://api.alquran.cloud/v1"
-# Quran.com (Quran Foundation) public v4 endpoint. If this ever returns
-# 401/403 from server-side, the tafsir block will gracefully degrade to
-# "Tafsir unavailable" rather than crashing the bot.
-QURAN_COM_TAFSIR_BASE = "https://api.quran.com/api/v4/tafsirs/by_ayah"
-
 DEFAULT_CITY = "Dhaka"
 DEFAULT_COUNTRY = "Bangladesh"
 DEFAULT_METHOD = 1  # University of Islamic Sciences, Karachi
