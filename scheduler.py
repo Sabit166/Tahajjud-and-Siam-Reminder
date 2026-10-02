@@ -12,11 +12,10 @@ from telegram.ext import Application
 from config import BD_TZ, log
 from jobs import (
     send_checkin_job,
-    send_nightly_amal_job,
     send_weekly_report_job,
     send_daily_report_job,
     send_jumuah_reminder_job,
-    send_ayyam_beej_reminder_job,
+    prayer_schedule_job,
     prayer_ayah_poll_job,
 )
 
@@ -29,84 +28,14 @@ def setup_scheduler(app: Application):
     if job_queue is None:
         raise RuntimeError("JobQueue is not available.")
 
-    # Daily practice polls
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="morning_dhikr",
-        name="morning_dhikr",
-    )
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="fazr_jamaat",
-        name="fazr_jamaat",
-    )
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=5, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="ishraq_salat",
-        name="ishraq_salat",
-    )
+    # Prayer-relative practices and reports are dispatched by the repeating
+    # prayer schedule poll below.
     job_queue.run_daily(
         send_checkin_job,
         time=datetime.time(hour=10, minute=0, tzinfo=BD_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
         data="quran",
         name="quran",
-    )
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="salawat_on_rasulullah",
-        name="salawat_on_rasulullah",
-    )
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=19, minute=30, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="evening_dhikr",
-        name="evening_dhikr",
-    )
-
-    # Fasting (Sawm) - Mondays & Thursdays at 4:00 AM
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=4, minute=0, tzinfo=BD_TZ),
-        days=(1, 4),
-        data="sawm",
-        name="sawm",
-    )
-
-    # Surah Kahf - Thursdays at 7:00 PM
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=19, minute=0, tzinfo=BD_TZ),
-        days=(4,),
-        data="surah_kahf",
-        name="surah_kahf",
-    )
-
-    # Yaum al-Jumu'ah Sunnah Reminder - Thursdays at 7:30 PM
-    # (surah_kahf poll fires at 7:00 PM, this follows 30 min later)
-    job_queue.run_daily(
-        send_jumuah_reminder_job,
-        time=datetime.time(hour=19, minute=30, tzinfo=BD_TZ),
-        days=(4,),
-        name="jumuah_reminder",
-    )
-
-    # Tahajjud - Daily at 3:00 AM
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=3, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="tahajjud",
-        name="tahajjud",
     )
 
     # Istighfar 100x - Daily at 12:00 PM (noon)
@@ -118,42 +47,15 @@ def setup_scheduler(app: Application):
         name="istighfar_100x",
     )
 
-    # Daily Report - Daily at 6:30 PM
-    job_queue.run_daily(
-        send_daily_report_job,
-        time=datetime.time(hour=18, minute=30, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        name="daily_report",
-    )
-
-    # Ayyam al-Bid (Ayyam-E-Beej) Reminder - Daily check at 10:15 PM
-    # (fires on the 12th night of the Hijri month)
-    job_queue.run_daily(
-        send_ayyam_beej_reminder_job,
-        time=datetime.time(hour=22, minute=20, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        name="ayyam_beej_reminder",
-    )
-
-    # Weekly Report - Fridays at 6:30 PM
-    job_queue.run_daily(
-        send_weekly_report_job,
-        time=datetime.time(hour=18, minute=30, tzinfo=BD_TZ),
-        days=(5,),
-        name="weekly_report",
-    )
-
-    # Nightly Amal - Daily at 10:00 PM
-    job_queue.run_daily(
-        send_nightly_amal_job,
-        time=datetime.time(hour=22, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        name="nightly_amal",
-    )
-
     # Ayah-of-the-Hour prayer-time poll — every 5 minutes the bot
     # re-fetches Aladhan's prayer times and dispatches one ayah reminder
     # per prayer per day (see messaging._prayer_ayah_poll_tick).
+    job_queue.run_repeating(
+        prayer_schedule_job,
+        interval=datetime.timedelta(minutes=1),
+        first=10,
+        name="prayer_schedule",
+    )
     job_queue.run_repeating(
         prayer_ayah_poll_job,
         interval=datetime.timedelta(minutes=5),

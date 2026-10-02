@@ -2,8 +2,7 @@
 CLI script to immediately trigger any poll or reminder manually from the terminal.
 
 Usage:
-    python send_now.py quran_page
-    python send_now.py ayyam_beej
+    python send_now.py quran
     python send_now.py <practice_or_action>
     python send_now.py --list
 """
@@ -24,15 +23,11 @@ from messaging import (
     send_weekly_report,
     send_daily_report,
     send_jumuah_reminder,
-    send_ayyam_beej_reminder,
-    check_and_send_ayyam_beej_reminder,
 )
 from db import init_db
 
 
 SPECIAL_ACTIONS = {
-    "ayyam_beej": "Send Ayyam al-Bid (13, 14, 15) fasting reminder message",
-    "ayyam_beej_check": "Check Hijri date and send Ayyam-E-Beej reminder only if today is the 12th Hijri",
     "jumuah": "Send Yaum al-Jumu'ah Sunnahs reminder message",
     "nightly_amal": "Send all 4 Nightly Amal check-in polls",
     "daily_report": "Send today's daily summary report",
@@ -53,13 +48,7 @@ async def main_async(target: str, force: bool = False):
 
     print(f"[*] Dispatching '{target}' to Telegram group {GROUP_CHAT_ID}...")
 
-    if target == "ayyam_beej":
-        await send_ayyam_beej_reminder(bot)
-        print("✅ Successfully sent Ayyam al-Bid (Ayyam-E-Beej) reminder!")
-    elif target == "ayyam_beej_check":
-        await check_and_send_ayyam_beej_reminder(bot, force=force)
-        print("✅ Ayyam-E-Beej Hijri date check completed!")
-    elif target == "jumuah":
+    if target == "jumuah":
         await send_jumuah_reminder(bot)
         print("✅ Successfully sent Yaum al-Jumu'ah reminder!")
     elif target == "nightly_amal":
@@ -86,8 +75,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python send_now.py quran_page     # Send "Read 1 page of the Quran" poll
-  python send_now.py ayyam_beej     # Send Ayyam-E-Beej fasting reminder
+    python send_now.py quran          # Send Quran poll
   python send_now.py tahajjud       # Send Tahajjud poll
   python send_now.py daily_report   # Send daily report
   python send_now.py --list         # List all available options
@@ -96,7 +84,7 @@ Examples:
     parser.add_argument(
         "target",
         nargs="?",
-        help="The practice key or reminder action to trigger (e.g. 'quran_page', 'ayyam_beej').",
+        help="The practice key or reminder action to trigger (e.g. 'quran', 'jumuah').",
     )
     parser.add_argument(
         "--list",

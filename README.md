@@ -11,7 +11,7 @@ The bot is split into focused modules instead of one large script:
 | `practices.py` | Static data: practice definitions, labels, poll options |
 | `db.py` | Supabase (PostgREST) client: schema, active-poll tracking, response/report queries |
 | `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
-| `messaging.py` | Builds and sends check-in polls, reports, and Ayyam-E-Beej/Jumu'ah reminders |
+| `messaging.py` | Builds and sends check-in polls, reports, and Jumu'ah reminders |
 | `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
 | `handlers.py` | Telegram update handlers (poll answers, new member welcome) |
 | `scheduler.py` | Registers all recurring jobs (`setup_scheduler`) |
@@ -39,9 +39,6 @@ You can dispatch any poll or reminder immediately from your terminal without wai
 ```bash
 # Send "Read 1 page of the Quran" poll
 python send_now.py quran_page
-
-# Send Ayyam al-Bid (Ayyam-E-Beej) fasting reminder
-python send_now.py ayyam_beej
 
 # Send Tahajjud poll
 python send_now.py tahajjud

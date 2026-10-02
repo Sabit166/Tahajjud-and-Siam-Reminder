@@ -215,13 +215,13 @@ def get_weekly_summary():
     return out
 
 
-def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]], str, str]:
+def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list[str], dict[str, dict[str, int]], str, str]:
     """Return (scheduled_practices, summary, report_start_iso, report_end_iso).
 
     summary is keyed by full_name -> {practice: did_it_bool}.
     """
     now = datetime.datetime.now(BD_TZ)
-    report_end = now.replace(
+    report_end = report_end or now.replace(
         hour=DAILY_REPORT_HOUR,
         minute=DAILY_REPORT_MINUTE,
         second=0,
@@ -242,7 +242,7 @@ def get_daily_summary() -> tuple[list[str], dict[str, dict[str, int]], str, str]
     if report_start.weekday() == 3:    # Thursday
         scheduled_practices.append("surah_kahf")
     scheduled_practices.extend(
-        ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "quran_page", "istighfar_100x"]
+        ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "quran", "istighfar_100x"]
     )
     if report_end.weekday() in (0, 3):  # Sun, Thu
         scheduled_practices.append("sawm")

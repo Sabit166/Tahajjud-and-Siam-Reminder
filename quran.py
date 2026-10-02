@@ -42,6 +42,7 @@ IBN_KATHIR_EDITION = "en-tafseer-ibn-kathir"
 
 @dataclass
 class PrayerTimes:
+    sunrise: _dt.time
     fajr: _dt.time
     dhuhr: _dt.time
     asr: _dt.time
@@ -50,6 +51,7 @@ class PrayerTimes:
 
     def as_dict(self) -> dict[str, _dt.time]:
         return {
+            "sunrise": self.sunrise,
             "fajr": self.fajr,
             "dhuhr": self.dhuhr,
             "asr": self.asr,
@@ -105,6 +107,7 @@ async def fetch_prayer_times(
         city, when, {k: timings.get(k) for k in ("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")},
     )
     return PrayerTimes(
+        sunrise=_t("Sunrise"),
         fajr=_t("Fajr"),
         dhuhr=_t("Dhuhr"),
         asr=_t("Asr"),
