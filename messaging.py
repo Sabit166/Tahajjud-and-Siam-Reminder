@@ -11,7 +11,7 @@ import datetime as _dt
 from telegram import Bot
 
 from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, BD_TZ, log
-from practices import PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
+from practices import AMAL_WEIGHTS, PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
 from scheduling import schedule_poll_close
 from quran import (
@@ -194,21 +194,25 @@ async def send_weekly_report(bot: Bot):
     user_weekly_marks: dict[str, int] = {}
     user_max_marks: dict[str, int] = {}
     for full_name, data in user_data.items():
-        # Sum of all practice counts. Each nightly sub-practice is its
-        # own row (e.g., nightly_al_mulk + nightly_as_sajdah + ...
-        # = up to 4 marks per night, up to 28 weekly).
-        total = sum(data.values())
+        # Sum completed practices using each amal's leaderboard weight.
+        total = sum(
+            completed * AMAL_WEIGHTS.get(practice, 1)
+            for practice, completed in data.items()
+        )
         user_weekly_marks[full_name] = total
-        # Max possible marks = sum of WEEKLY_MAX for every practice the
-        # user has a row for. Default to the full WEEKLY_MAX sum if no
-        # rows present (e.g., brand new user with zero activity).
+        # Max possible weighted marks = sum of each practice's weekly
+        # limit multiplied by its leaderboard weight.
         present = set(data.keys())
         if present:
             user_max_marks[full_name] = sum(
-                WEEKLY_MAX.get(p, 7) for p in present
+                WEEKLY_MAX.get(p, 7) * AMAL_WEIGHTS.get(p, 1)
+                for p in present
             )
         else:
-            user_max_marks[full_name] = sum(WEEKLY_MAX.values())
+            user_max_marks[full_name] = sum(
+                max_marks * AMAL_WEIGHTS.get(practice, 1)
+                for practice, max_marks in WEEKLY_MAX.items()
+            )
 
     # Sort users by marks desc, then name asc for stable tie-breaking.
     sorted_users = sorted(
@@ -222,9 +226,10 @@ async def send_weekly_report(bot: Bot):
         for practice, completed in sorted(user_data[full_name].items()):
             label = _report_label(practice)
             max_n = WEEKLY_MAX.get(practice, 7)
+            weight = AMAL_WEIGHTS.get(practice, 1)
             bar = "🟩" * completed + "⬜" * max(0, max_n - completed)
             block += f"  -- {label}:\n"
-            block += f"  {bar} {completed}/{max_n}\n"
+            block += f"  {bar} {completed}/{max_n} ({completed * weight}/{max_n * weight} marks)\n"
         block += "━━━━━━━━━━\n"
         blocks.append(block)
 
@@ -246,16 +251,19 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
         )
         return
 
-    # Compute per-user marks. Each amal = 1 mark, including each of the
-    # 4 nightly sub-practices (so nightly amal can yield up to 4 marks).
+    # Compute weighted per-user marks. Each nightly sub-practice remains an
+    # independent amal and contributes its own configured weight.
     user_marks: dict[str, int] = {}
     for full_name, results in summary.items():
         marks = 0
         for practice in scheduled_practices:
-            marks += 1 if results.get(practice, 0) else 0
+            if results.get(practice, 0):
+                marks += AMAL_WEIGHTS.get(practice, 1)
         user_marks[full_name] = marks
 
-    full_marks = len(scheduled_practices)
+    full_marks = sum(
+        AMAL_WEIGHTS.get(practice, 1) for practice in scheduled_practices
+    )
     sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], kv[0]))
 
     # Pull current streaks for users who responded in this report window,
@@ -276,7 +284,7 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
             label = _report_label(practice)
             did_it = summary[full_name].get(practice, 0)
             mark = "✅" if did_it else "❌"
-            streak_n = user_streaks.get(practice, 0)
+            streak_n = user_streaks.get(practice, 0) if did_it else 0
             block += f"  -- {label}: {mark} ({streak_n})\n"
         block += "━━━━━━━━━━\n"
         blocks.append(block)
@@ -368,7 +376,7 @@ async def _prayer_schedule_tick(context):
         ("evening_dhikr", maghrib + _dt.timedelta(minutes=30)),
         ("nightly_amal", at("isha", _dt.timedelta(minutes=30))),
         ("tahajjud", at("fajr", _dt.timedelta(minutes=-30))),
-        ("daily_report", maghrib),
+        ("daily_report", maghrib + _dt.timedelta(minutes=2)),
     ]
     if today.weekday() in (0, 3):
         events.append(("sawm", at("fajr", _dt.timedelta(minutes=-30))))

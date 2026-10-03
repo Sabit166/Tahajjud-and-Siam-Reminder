@@ -17,6 +17,25 @@ The bot is split into focused modules instead of one large script:
 | `scheduler.py` | Registers all recurring jobs (`setup_scheduler`) |
 | `send_now.py` | CLI tool to manually dispatch any poll or reminder on-demand |
 
+Leaderboard weights are configured in `practices.py`. The current weights are:
+
+| Amal | Weight |
+|---|---:|
+| Fazr Jamaat | 20 |
+| Tahajjud | 15 |
+| Sawm | 12 |
+| Istighfar | 12 |
+| Salawat | 12 |
+| Morning Adhkar | 8 |
+| Evening Adhkar | 8 |
+| Ishraq | 7 |
+| Surah Mulk | 5 |
+| Al-Sajdah | 5 |
+| Last 2 of Al-Baqarah | 4 |
+| 33-33-34 | 3 |
+
+Practices without a configured weight retain the original weight of 1.
+
 ## Run locally
 
 1. Fill in `.env` with your Telegram bot token, group chat ID, and your Supabase URL/key (see the next section).
@@ -37,8 +56,8 @@ python main.py
 You can dispatch any poll or reminder immediately from your terminal without waiting for the scheduler:
 
 ```bash
-# Send "Read 1 page of the Quran" poll
-python send_now.py quran_page
+# Send "Read 2 ayah of the Quran" poll
+python send_now.py quran
 
 # Send Tahajjud poll
 python send_now.py tahajjud

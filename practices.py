@@ -21,6 +21,25 @@ PRACTICES = {
     "istighfar_100x": {"label": "Istighfar 100x", "poll_options": ["Alhamdulillah, done", "Missed"]},
 }
 
+# Leaderboard weight for each amal. Practices not listed here retain the
+# previous one-mark behavior.
+AMAL_WEIGHTS: dict[str, int] = {
+    "fazr_jamaat": 20,
+    "tahajjud": 15,
+    "sawm": 8,
+    "istighfar_100x": 12,
+    "salawat_on_rasulullah": 12,
+    "morning_dhikr": 8,
+    "evening_dhikr": 8,
+    "ishraq_salat": 7,
+    "quran": 7,
+    "surah_kahf": 12,
+    "nightly_al_mulk": 5,
+    "nightly_as_sajdah": 5,
+    "nightly_al_baqarah_last_2": 10,
+    "nightly_33_tasbeeh": 3,
+}
+
 NIGHTLY_AMAL_OPTIONS = [
     "nightly_al_mulk",
     "nightly_as_sajdah",

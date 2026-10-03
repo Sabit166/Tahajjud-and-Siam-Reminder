@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import GROUP_CHAT_ID, BD_TZ, log
-from practices import PRACTICES, GROUP_AMAL_LABELS
+from practices import AMAL_WEIGHTS, PRACTICES, GROUP_AMAL_LABELS
 from db import get_poll_practice, save_response, update_streak_for_response
 from scheduling import schedule_message_delete
 
@@ -46,7 +46,8 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         update_streak_for_response(user.id, practice_key, scheduled_date, bool(did_it))
 
         if did_it:
-            reply = f"MashaAllah --- {full_name} --- {label}"
+            points = AMAL_WEIGHTS.get(practice_key, 1)
+            reply = f"MashaAllah --- {full_name} --- {label} (+{points})"
         else:
             reply = f"InshaAllah next time --- {full_name} --- {label}"
 
