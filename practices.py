@@ -28,7 +28,7 @@ AMAL_WEIGHTS: dict[str, int] = {
     "tahajjud": 15,
     "sawm": 8,
     "istighfar_100x": 12,
-    "salawat_on_rasulullah": 12,
+    "salawat_on_rasulullah": 9,
     "morning_dhikr": 8,
     "evening_dhikr": 8,
     "ishraq_salat": 7,
