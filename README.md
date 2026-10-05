@@ -38,7 +38,8 @@ Practices without a configured weight retain the original weight of 1.
 
 ## Run locally
 
-1. Fill in `.env` with your Telegram bot token, group chat ID, and your Supabase URL/key (see the next section).
+1. Fill in `.env` with your Telegram bot token, group chat ID, HadithAPI key,
+   and your Supabase URL/key (see the next section).
 2. Install dependencies:
 
 ```powershell
@@ -87,6 +88,7 @@ GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
 SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
 SUPABASE_API_KEY=sb_secret_...your_service_role_key...
+HADITH_API_KEY=your_hadithapi_key
 ```
 
 ### Security note

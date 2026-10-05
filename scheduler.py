@@ -13,7 +13,7 @@ from config import BD_TZ, log
 from jobs import (
     send_checkin_job,
     prayer_schedule_job,
-    prayer_ayah_poll_job,
+    prayer_hadith_poll_job,
 )
 
 # ============================================================
@@ -44,9 +44,9 @@ def setup_scheduler(app: Application):
         name="istighfar_100x",
     )
 
-    # Ayah-of-the-Hour prayer-time poll — every 5 minutes the bot
-    # re-fetches Aladhan's prayer times and dispatches one ayah reminder
-    # per prayer per day (see messaging._prayer_ayah_poll_tick).
+    # Prayer-time hadith poll — every 5 minutes the bot re-fetches
+    # Aladhan's prayer times and dispatches one hadith reminder
+    # per prayer per day (see messaging._prayer_hadith_poll_tick).
     job_queue.run_repeating(
         prayer_schedule_job,
         interval=datetime.timedelta(minutes=1),
@@ -54,10 +54,10 @@ def setup_scheduler(app: Application):
         name="prayer_schedule",
     )
     job_queue.run_repeating(
-        prayer_ayah_poll_job,
+        prayer_hadith_poll_job,
         interval=datetime.timedelta(minutes=5),
         first=10,  # seconds after scheduler starts
-        name="prayer_ayah_poll",
+        name="prayer_hadith_poll",
     )
 
     log.info("Scheduler started. All jobs are active.")

@@ -37,6 +37,7 @@ BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
 # The service-role key bypasses RLS so we don't need any policy setup.
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY", "")
+HADITH_API_KEY = os.getenv("HADITH_API_KEY", "")
 
 RESPONSE_WINDOW_HOURS = 24
 RESPONSE_DELETE_AFTER_SECONDS = 10

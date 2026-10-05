@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 from messaging import (
     send_checkin,
     _prayer_schedule_tick,
-    _prayer_ayah_poll_tick,
+    _prayer_hadith_poll_tick,
 )
 
 
@@ -24,10 +24,9 @@ async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
     await send_checkin(context.bot, cast(str, job.data), context.job_queue)
 
 
-async def prayer_ayah_poll_job(context: ContextTypes.DEFAULT_TYPE):
-    """Every-5-minute tick that dispatches Ayah-of-the-Hour reminders
-    at each of the 5 prayer times. See ``messaging._prayer_ayah_poll_tick``."""
-    await _prayer_ayah_poll_tick(context)
+async def prayer_hadith_poll_job(context: ContextTypes.DEFAULT_TYPE):
+    """Every-five-minute tick that dispatches hadith reminders."""
+    await _prayer_hadith_poll_tick(context)
 
 
 async def prayer_schedule_job(context: ContextTypes.DEFAULT_TYPE):
