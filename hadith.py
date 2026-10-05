@@ -91,6 +91,7 @@ def format_hadith_message(prayer_name: str, hadith: Hadith) -> str:
         hadith.text,
         "",
         f"📚 {hadith.book.title()}{reference}",
+        "Status: Sahih",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "May Allah grant us beneficial knowledge and righteous action. Ameen.",
     ]
