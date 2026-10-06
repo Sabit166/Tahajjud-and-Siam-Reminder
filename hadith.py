@@ -17,6 +17,7 @@ REQUIRED_STATUS = "sahih"
 @dataclass(frozen=True)
 class Hadith:
     text: str
+    narrator: str
     book: str
     reference: str
 
@@ -64,9 +65,15 @@ async def fetch_hadith(
             raise ValueError(f"HadithAPI returned no qualifying hadiths for {book}.")
 
         item = secrets.choice(candidates)
+        book_data = item.get("book")
+        if isinstance(book_data, dict):
+            book_name = str(book_data.get("bookName", book)).strip()
+        else:
+            book_name = str(book_data or book).strip()
         hadith = Hadith(
             text=str(item["hadithEnglish"]).strip(),
-            book=str(item.get("book", book)).strip(),
+            narrator=str(item.get("englishNarrator", "")).strip(),
+            book=book_name,
             reference=str(item.get("hadithNumber", "")).strip(),
         )
         _last_successful_hadith = hadith
@@ -88,6 +95,7 @@ def format_hadith_message(prayer_name: str, hadith: Hadith) -> str:
     parts = [
         f"🕌 {nice_prayer} — Hadith of the Prayer",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"Narrator: {hadith.narrator}" if hadith.narrator else "",
         hadith.text,
         "",
         f"📚 {hadith.book.title()}{reference}",
