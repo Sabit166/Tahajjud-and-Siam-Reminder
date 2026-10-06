@@ -10,7 +10,7 @@ import httpx
 from config import HADITH_API_KEY, log
 
 HADITH_API_BASE = "https://hadithapi.com/api"
-ALLOWED_BOOKS = ("sahih-bukhari", "sahih-muslim")
+ALLOWED_BOOKS = ("sahih-bukhari",)
 REQUIRED_STATUS = "sahih"
 
 
@@ -33,7 +33,7 @@ def _is_allowed_book(value: object) -> bool:
 async def fetch_hadith(
     client: httpx.AsyncClient | None = None,
 ) -> Hadith:
-    """Fetch one Sahih hadith from either Sahih Bukhari or Sahih Muslim."""
+    """Fetch one Sahih hadith from Sahih Bukhari."""
     global _last_successful_hadith
 
     if not HADITH_API_KEY:
