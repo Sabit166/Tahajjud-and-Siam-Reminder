@@ -68,5 +68,27 @@ select distinct on (user_id, practice)
 from public.responses
 order by user_id, practice, recorded_at desc;
 
+-- 6. POLL CONFIGS (Dynamic polls & schedules)
+create table if not exists public.poll_configs (
+    id                      text primary key,
+    title                   text not null,
+    poll_type               text not null default 'amal_poll',
+    poll_options            jsonb not null default '["Alhamdulillah, done", "Incomplete/Missed"]'::jsonb,
+    weight                  integer not null default 1,
+    time_type               text not null default 'prayer_relative',
+    fixed_time              text,
+    prayer_name             text,
+    prayer_offset_minutes   integer not null default 0,
+    days_of_week            jsonb not null default '[0, 1, 2, 3, 4, 5, 6]'::jsonb,
+    is_active               boolean not null default true,
+    created_at              timestamptz not null default now(),
+    updated_at              timestamptz not null default now()
+);
+
+drop trigger if exists poll_configs_touch_updated_at on public.poll_configs;
+create trigger poll_configs_touch_updated_at
+    before update on public.poll_configs
+    for each row execute function public.touch_updated_at();
+
 -- Done. Tables are public.* and the service-role key bypasses RLS,
 -- so the bot can read/write without any extra policy work.

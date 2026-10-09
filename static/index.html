@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Dhikr & Tahajjud — Poll & Schedule Manager</title>
+  <meta name="description" content="Mobile-friendly control dashboard for Dhikr & Tahajjud Telegram accountability bot. Manage prayer-relative and fixed-time polls.">
+  
+  <!-- Telegram Web App JS SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Google Fonts: Plus Jakarta Sans & Amiri -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <!-- PIN Authentication Overlay -->
+  <div id="auth-overlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card">
+      <div class="auth-bismillah">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>
+      <div class="auth-icon">🔒</div>
+      <h2 class="auth-title">Admin Access</h2>
+      <p class="auth-subtitle">Enter your Admin PIN to manage Dhikr & Tahajjud polls and schedules.</p>
+      
+      <div class="pin-input-group">
+        <input type="password" id="pin-input" placeholder="Enter PIN" inputmode="numeric" maxlength="20" autofocus autocomplete="current-password">
+        <button id="pin-submit-btn" class="btn btn-primary">Unlock</button>
+      </div>
+      <div id="auth-error" class="auth-error" style="display: none;">Invalid PIN. Please try again.</div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Main App Shell -->
+  <div id="app" class="app-container">
+    <!-- Top Bar -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="brand">
+          <div class="brand-arabic">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>
+          <div class="brand-title-wrap">
+            <span class="brand-icon">🌙</span>
+            <h1 class="brand-title">Dhikr & Tahajjud</h1>
+          </div>
+          <p class="brand-subtitle">Poll & Prayer Schedule Manager</p>
+        </div>
+        <div class="header-actions">
+          <button id="refresh-btn" class="icon-btn" title="Refresh Polls" aria-label="Refresh">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+          <button id="add-poll-header-btn" class="btn btn-emerald btn-sm">
+            <span>+ Add Poll</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Clock & Today Info -->
+      <div class="live-clock-bar">
+        <div class="clock-item">
+          <span class="clock-label">Dhaka Time (BST)</span>
+          <span id="live-time" class="clock-val">--:--:--</span>
+        </div>
+        <div class="clock-item right">
+          <span class="clock-label" id="current-day-label">Today</span>
+          <span id="current-date-label" class="clock-date">Loading...</span>
+        </div>
+      </div>
+
+      <!-- Prayer Times Carousel / Strip -->
+      <div class="prayer-times-section">
+        <div class="section-micro-header">
+          <span>🕌 Today's Prayer Timings (Dhaka)</span>
+          <span id="next-prayer-badge" class="badge badge-emerald">Next: Loading...</span>
+        </div>
+        <div class="prayer-strip" id="prayer-strip">
+          <div class="prayer-card" data-prayer="fajr">
+            <span class="prayer-name">Fajr</span>
+            <span class="prayer-time" id="time-fajr">--:--</span>
+          </div>
+          <div class="prayer-card" data-prayer="sunrise">
+            <span class="prayer-name">Sunrise</span>
+            <span class="prayer-time" id="time-sunrise">--:--</span>
+          </div>
+          <div class="prayer-card" data-prayer="dhuhr">
+            <span class="prayer-name">Dhuhr</span>
+            <span class="prayer-time" id="time-dhuhr">--:--</span>
+          </div>
+          <div class="prayer-card" data-prayer="asr">
+            <span class="prayer-name">Asr</span>
+            <span class="prayer-time" id="time-asr">--:--</span>
+          </div>
+          <div class="prayer-card" data-prayer="maghrib">
+            <span class="prayer-name">Maghrib</span>
+            <span class="prayer-time" id="time-maghrib">--:--</span>
+          </div>
+          <div class="prayer-card" data-prayer="isha">
+            <span class="prayer-name">Isha</span>
+            <span class="prayer-time" id="time-isha">--:--</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Controls / Filters Bar -->
+    <section class="controls-section">
+      <!-- Search -->
+      <div class="search-box">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="search-input" placeholder="Search polls or practices..." autocomplete="off">
+        <button id="clear-search-btn" class="clear-search-btn" style="display: none;">✕</button>
+      </div>
+
+      <!-- Quick Category Filter Tabs -->
+      <div class="filter-tabs" id="filter-tabs">
+        <button class="tab-chip active" data-filter="all">All (<span id="count-all">0</span>)</button>
+        <button class="tab-chip" data-filter="amal_poll">Amal Polls (<span id="count-amal">0</span>)</button>
+        <button class="tab-chip" data-filter="reports">Reports & Sunnahs (<span id="count-reports">0</span>)</button>
+        <button class="tab-chip" data-filter="active">Active (<span id="count-active">0</span>)</button>
+        <button class="tab-chip" data-filter="paused">Paused (<span id="count-paused">0</span>)</button>
+      </div>
+    </section>
+
+    <!-- Polls List Container -->
+    <main class="polls-main">
+      <div class="list-status-header">
+        <span id="filtered-count-text">Showing all polls</span>
+        <span class="status-tip">Tap ⚡ to Send Now</span>
+      </div>
+
+      <!-- Loading Skeleton -->
+      <div id="polls-loading" class="polls-loading">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+
+      <!-- Empty State -->
+      <div id="polls-empty" class="polls-empty" style="display: none;">
+        <div class="empty-icon">📭</div>
+        <h3>No Polls Found</h3>
+        <p>No schedules match your current search or filter.</p>
+        <button id="empty-add-btn" class="btn btn-emerald mt-3">+ Add New Poll</button>
+      </div>
+
+      <!-- Actual Poll Cards Grid -->
+      <div id="polls-list" class="polls-list"></div>
+    </main>
+
+    <!-- Floating Action Button for Mobile -->
+    <div class="fab-container">
+      <button id="fab-add-btn" class="fab-btn" aria-label="Add New Poll">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span class="fab-label">New Poll</span>
+      </button>
+    </div>
+
+    <!-- Bottom Sheet / Modal for Adding & Editing Polls -->
+    <div id="poll-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-sheet" id="modal-sheet">
+        <div class="modal-handle-bar">
+          <div class="modal-handle"></div>
+        </div>
+
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <h2 id="modal-title" class="modal-title">Add New Poll</h2>
+            <p id="modal-subtitle" class="modal-subtitle">Configure poll timing and leaderboard marks</p>
+          </div>
+          <button id="modal-close-btn" class="modal-close-btn" aria-label="Close modal">✕</button>
+        </div>
+
+        <form id="poll-form" class="modal-body">
+          <input type="hidden" id="form-poll-id">
+
+          <!-- 1. Poll Title / Question -->
+          <div class="form-group">
+            <label for="form-title" class="form-label">Poll Question / Title <span class="required">*</span></label>
+            <input type="text" id="form-title" class="form-control" placeholder="e.g. Duha Salat (Chasht)" required maxlength="120">
+          </div>
+
+          <!-- 2. Poll Type -->
+          <div class="form-group">
+            <label class="form-label">Poll Type</label>
+            <div class="segmented-control" id="form-type-segments">
+              <button type="button" class="segment-btn active" data-type="amal_poll">📿 Amal Poll</button>
+              <button type="button" class="segment-btn" data-type="report">📊 Report</button>
+              <button type="button" class="segment-btn" data-type="reminder">🌿 Reminder</button>
+            </div>
+            <input type="hidden" id="form-type" value="amal_poll">
+          </div>
+
+          <!-- 3. Timing Configuration -->
+          <div class="timing-box">
+            <label class="form-label">⏰ Schedule Timing Mode <span class="required">*</span></label>
+            <div class="segmented-control mb-3" id="form-time-mode-segments">
+              <button type="button" class="segment-btn active" data-mode="prayer_relative">🕌 Relative to Prayer</button>
+              <button type="button" class="segment-btn" data-mode="fixed">⏰ Fixed Clock Time</button>
+            </div>
+            <input type="hidden" id="form-time-mode" value="prayer_relative">
+
+            <!-- Sub-panel A: Prayer Relative -->
+            <div id="panel-prayer-relative" class="timing-subpanel">
+              <div class="form-row">
+                <div class="form-col">
+                  <label for="form-prayer-name" class="form-sublabel">Prayer Event</label>
+                  <select id="form-prayer-name" class="form-control">
+                    <option value="fajr">Fajr</option>
+                    <option value="sunrise">Sunrise</option>
+                    <option value="dhuhr">Dhuhr</option>
+                    <option value="asr">Asr</option>
+                    <option value="maghrib">Maghrib</option>
+                    <option value="isha">Isha</option>
+                  </select>
+                </div>
+                <div class="form-col">
+                  <label for="form-offset-dir" class="form-sublabel">Offset Relation</label>
+                  <select id="form-offset-dir" class="form-control">
+                    <option value="after">After prayer (+)</option>
+                    <option value="before">Before prayer (-)</option>
+                    <option value="at">Exactly at prayer (0m)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group mt-2" id="offset-minutes-group">
+                <label for="form-offset-minutes" class="form-sublabel">Offset Minutes</label>
+                <div class="offset-input-wrap">
+                  <input type="number" id="form-offset-minutes" class="form-control" min="0" max="180" value="30">
+                  <div class="quick-minutes-chips">
+                    <button type="button" class="chip-btn" data-min="10">10m</button>
+                    <button type="button" class="chip-btn" data-min="15">15m</button>
+                    <button type="button" class="chip-btn" data-min="30">30m</button>
+                    <button type="button" class="chip-btn" data-min="45">45m</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Live Calculated Time Preview Banner -->
+              <div class="time-preview-card" id="prayer-calc-preview">
+                <span class="preview-icon">🎯</span>
+                <div class="preview-content">
+                  <span class="preview-title">Today's Calculated Dispatch Time:</span>
+                  <span id="preview-calculated-clock" class="preview-clock">--:--</span>
+                  <span id="preview-calculated-desc" class="preview-sub">30 min after Maghrib</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sub-panel B: Fixed Clock Time -->
+            <div id="panel-fixed-time" class="timing-subpanel" style="display: none;">
+              <div class="form-group">
+                <label for="form-fixed-time" class="form-sublabel">Fixed Time (24h format HH:MM)</label>
+                <input type="time" id="form-fixed-time" class="form-control time-input-lg" value="10:00">
+                <span class="form-hint">Poll will dispatch daily at this exact Dhaka clock time.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Days of the Week Selection -->
+          <div class="form-group">
+            <div class="label-with-presets">
+              <label class="form-label">Active Days of Week</label>
+              <div class="quick-days-presets">
+                <button type="button" class="preset-link" data-days="all">Every Day</button>
+                <button type="button" class="preset-link" data-days="sawm">Mon & Thu</button>
+                <button type="button" class="preset-link" data-days="friday">Friday Only</button>
+              </div>
+            </div>
+
+            <div class="weekday-selector" id="weekday-selector">
+              <button type="button" class="day-btn active" data-day="0">M<span>Mon</span></button>
+              <button type="button" class="day-btn active" data-day="1">T<span>Tue</span></button>
+              <button type="button" class="day-btn active" data-day="2">W<span>Wed</span></button>
+              <button type="button" class="day-btn active" data-day="3">T<span>Thu</span></button>
+              <button type="button" class="day-btn active" data-day="4">F<span>Fri</span></button>
+              <button type="button" class="day-btn active" data-day="5">S<span>Sat</span></button>
+              <button type="button" class="day-btn active" data-day="6">S<span>Sun</span></button>
+            </div>
+          </div>
+
+          <!-- 5. Marks / Leaderboard Weight (For Amal Polls) -->
+          <div class="form-group" id="weight-group">
+            <div class="label-with-presets">
+              <label for="form-weight" class="form-label">Leaderboard Marks (Points)</label>
+              <span id="weight-display" class="weight-badge">⭐ 7 marks</span>
+            </div>
+            <div class="weight-slider-wrap">
+              <input type="range" id="form-weight" min="1" max="50" value="7" class="weight-slider">
+            </div>
+            <span class="form-hint">Points awarded when group members answer "Done" in Telegram.</span>
+          </div>
+
+          <!-- 6. Custom Poll Answer Options -->
+          <div class="form-group" id="options-group">
+            <div class="label-with-presets">
+              <label class="form-label">Poll Answer Options</label>
+              <button type="button" id="add-option-btn" class="preset-link">+ Add Option</button>
+            </div>
+            <div id="options-list-container" class="options-list-container">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- 7. Active Status Toggle -->
+          <div class="form-group toggle-row">
+            <div>
+              <span class="form-label mb-0">Active Status</span>
+              <p class="form-hint mb-0">Inactive polls remain saved but will not trigger.</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="form-is-active" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <!-- Modal Actions -->
+          <div class="modal-footer">
+            <button type="button" id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+            <button type="submit" id="modal-save-btn" class="btn btn-emerald btn-lg">Save Poll Schedule</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Confirm Delete Modal -->
+    <div id="confirm-modal" class="modal-backdrop" style="display: none;">
+      <div class="confirm-dialog">
+        <div class="confirm-icon">⚠️</div>
+        <h3 class="confirm-title">Delete Poll?</h3>
+        <p id="confirm-text" class="confirm-text">Are you sure you want to delete this poll? This action cannot be undone.</p>
+        <div class="confirm-actions">
+          <button id="confirm-cancel-btn" class="btn btn-secondary">Keep Poll</button>
+          <button id="confirm-delete-btn" class="btn btn-danger">Yes, Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

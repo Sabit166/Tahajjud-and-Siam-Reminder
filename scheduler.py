@@ -25,24 +25,8 @@ def setup_scheduler(app: Application):
     if job_queue is None:
         raise RuntimeError("JobQueue is not available.")
 
-    # Prayer-relative practices and reports are dispatched by the repeating
-    # prayer schedule poll below.
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=10, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="quran",
-        name="quran",
-    )
-
-    # Istighfar 100x - Daily at 12:00 PM (noon)
-    job_queue.run_daily(
-        send_checkin_job,
-        time=datetime.time(hour=12, minute=0, tzinfo=BD_TZ),
-        days=(0, 1, 2, 3, 4, 5, 6),
-        data="istighfar_100x",
-        name="istighfar_100x",
-    )
+    # Dynamic polls, reports, and reminders are evaluated every minute
+    # by prayer_schedule_job based on poll_configs and prayer times.
 
     # Prayer-time hadith poll — every 5 minutes the bot re-fetches
     # Aladhan's prayer times and dispatches one hadith reminder

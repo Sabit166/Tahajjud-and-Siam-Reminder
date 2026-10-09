@@ -14,6 +14,8 @@ Tables (created by supabase_schema.sql):
 from __future__ import annotations
 
 import datetime
+import json
+from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
@@ -54,9 +56,7 @@ def _sb() -> Client:
 # ============================================================
 
 def init_db():
-    """No-op for Supabase. The schema is created via the SQL editor
-    (see supabase_schema.sql). We still verify connectivity so the bot
-    fails fast on a bad key."""
+    """Verify connectivity and seed/load dynamic poll configurations."""
     try:
         # 1-row read forces a real round trip and surfaces auth errors.
         _sb().table("responses").select("id").limit(1).execute()
@@ -64,6 +64,405 @@ def init_db():
     except Exception as exc:
         log.error("Supabase connectivity check failed: %s", exc)
         raise
+    seed_initial_poll_configs()
+
+
+# ============================================================
+#  POLL CONFIGURATIONS (DYNAMIC SCHEDULES & PRACTICES)
+# ============================================================
+
+POLL_CONFIGS_FILE = Path(__file__).parent / "poll_configs.json"
+_POLL_CONFIGS_CACHE: dict[str, dict] = {}
+_SUPABASE_POLL_CONFIGS_AVAILABLE: bool | None = None
+
+DEFAULT_POLL_CONFIGS: list[dict] = [
+    {
+        "id": "morning_dhikr",
+        "title": "Morning Adhkar",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
+        "weight": 8,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "sunrise",
+        "prayer_offset_minutes": 0,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "fazr_jamaat",
+        "title": "Fazr Jamaat",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed Jamaat"],
+        "weight": 20,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "sunrise",
+        "prayer_offset_minutes": 0,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "ishraq_salat",
+        "title": "Ishraq Salat",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 7,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "sunrise",
+        "prayer_offset_minutes": 0,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "quran",
+        "title": "Read 2 ayah of the Quran",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 7,
+        "time_type": "fixed",
+        "fixed_time": "10:00",
+        "prayer_name": None,
+        "prayer_offset_minutes": 0,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "istighfar_100x",
+        "title": "Istighfar 100x",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 12,
+        "time_type": "fixed",
+        "fixed_time": "12:00",
+        "prayer_name": None,
+        "prayer_offset_minutes": 0,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "salawat_on_rasulullah",
+        "title": "Salawat on Rasulullah",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
+        "weight": 9,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "maghrib",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "evening_dhikr",
+        "title": "Evening Adhkar",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
+        "weight": 8,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "maghrib",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "tahajjud",
+        "title": "Tahajjud Salat",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"],
+        "weight": 15,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "fajr",
+        "prayer_offset_minutes": -30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "sawm",
+        "title": "Sawm",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"],
+        "weight": 8,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "fajr",
+        "prayer_offset_minutes": -30,
+        "days_of_week": [0, 3],
+        "is_active": True,
+    },
+    {
+        "id": "surah_kahf",
+        "title": "Surah Kahf",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
+        "weight": 12,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "dhuhr",
+        "prayer_offset_minutes": 0,
+        "days_of_week": [4],
+        "is_active": True,
+    },
+    {
+        "id": "nightly_al_mulk",
+        "title": "Surat Al-Mulk",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 5,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "isha",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "nightly_as_sajdah",
+        "title": "Surat As-Sajdah",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 5,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "isha",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "nightly_al_baqarah_last_2",
+        "title": "Surat Al-Baqarah (Last 2 ayats)",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 10,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "isha",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "nightly_33_tasbeeh",
+        "title": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
+        "poll_type": "amal_poll",
+        "poll_options": ["Alhamdulillah, done", "Missed"],
+        "weight": 3,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "isha",
+        "prayer_offset_minutes": 30,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "daily_report",
+        "title": "Daily Summary Report",
+        "poll_type": "report",
+        "poll_options": [],
+        "weight": 0,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "maghrib",
+        "prayer_offset_minutes": 2,
+        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
+        "is_active": True,
+    },
+    {
+        "id": "weekly_report",
+        "title": "Weekly Summary Report",
+        "poll_type": "report",
+        "poll_options": [],
+        "weight": 0,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "maghrib",
+        "prayer_offset_minutes": 5,
+        "days_of_week": [4],
+        "is_active": True,
+    },
+    {
+        "id": "jumuah_reminder",
+        "title": "Yaum al-Jumu'ah Sunnahs Reminder",
+        "poll_type": "reminder",
+        "poll_options": [],
+        "weight": 0,
+        "time_type": "prayer_relative",
+        "fixed_time": None,
+        "prayer_name": "maghrib",
+        "prayer_offset_minutes": 10,
+        "days_of_week": [3],
+        "is_active": True,
+    },
+]
+
+def _load_local_poll_configs() -> dict[str, dict]:
+    if POLL_CONFIGS_FILE.exists():
+        try:
+            with open(POLL_CONFIGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return {item["id"]: item for item in data if "id" in item}
+                elif isinstance(data, dict):
+                    return data
+        except Exception as exc:
+            log.warning("Could not read local poll_configs.json: %s", exc)
+
+    # Initialize from defaults
+    result = {item["id"]: dict(item) for item in DEFAULT_POLL_CONFIGS}
+    _save_local_poll_configs(result)
+    return result
+
+def _save_local_poll_configs(configs: dict[str, dict]):
+    try:
+        with open(POLL_CONFIGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(configs.values()), f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        log.warning("Could not write local poll_configs.json: %s", exc)
+
+def seed_initial_poll_configs():
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE, _POLL_CONFIGS_CACHE
+    local_configs = _load_local_poll_configs()
+    _POLL_CONFIGS_CACHE = local_configs.copy()
+
+    try:
+        res = _sb().table("poll_configs").select("id").limit(1).execute()
+        _SUPABASE_POLL_CONFIGS_AVAILABLE = True
+
+        count_res = _sb().table("poll_configs").select("*").execute()
+        rows = count_res.data or []
+        if not rows:
+            log.info("Seeding initial %d poll configs to Supabase...", len(DEFAULT_POLL_CONFIGS))
+            for item in DEFAULT_POLL_CONFIGS:
+                _sb().table("poll_configs").upsert(item).execute()
+            _POLL_CONFIGS_CACHE = {item["id"]: dict(item) for item in DEFAULT_POLL_CONFIGS}
+        else:
+            _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
+            _save_local_poll_configs(_POLL_CONFIGS_CACHE)
+        log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE))
+    except Exception as exc:
+        _SUPABASE_POLL_CONFIGS_AVAILABLE = False
+        log.info(
+            "Supabase table 'poll_configs' not yet migrated; using local poll_configs.json (%d items). Notice: run supabase_schema.sql to enable Supabase cloud table sync.",
+            len(_POLL_CONFIGS_CACHE),
+        )
+
+def get_all_poll_configs(active_only: bool = False) -> list[dict]:
+    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    if _SUPABASE_POLL_CONFIGS_AVAILABLE:
+        try:
+            res = _sb().table("poll_configs").select("*").order("created_at").execute()
+            if res.data:
+                _POLL_CONFIGS_CACHE = {row["id"]: row for row in res.data}
+                _save_local_poll_configs(_POLL_CONFIGS_CACHE)
+        except Exception as exc:
+            log.warning("Failed to refresh poll_configs from Supabase, using cache: %s", exc)
+
+    if not _POLL_CONFIGS_CACHE:
+        _POLL_CONFIGS_CACHE = _load_local_poll_configs()
+
+    items = list(_POLL_CONFIGS_CACHE.values())
+    if active_only:
+        items = [i for i in items if i.get("is_active", True)]
+    return items
+
+def get_poll_config(poll_id: str) -> Optional[dict]:
+    if not _POLL_CONFIGS_CACHE:
+        get_all_poll_configs()
+    return _POLL_CONFIGS_CACHE.get(poll_id)
+
+def upsert_poll_config(data: dict) -> dict:
+    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    poll_id = data.get("id")
+    if not poll_id:
+        raise ValueError("Poll configuration must have an 'id'")
+
+    now_iso = datetime.datetime.now(BD_TZ).isoformat()
+    clean_data = {
+        "id": poll_id,
+        "title": str(data.get("title", "")),
+        "poll_type": str(data.get("poll_type", "amal_poll")),
+        "poll_options": list(data.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"]),
+        "weight": int(data.get("weight", 1)),
+        "time_type": str(data.get("time_type", "prayer_relative")),
+        "fixed_time": data.get("fixed_time") if data.get("time_type") == "fixed" else None,
+        "prayer_name": data.get("prayer_name") if data.get("time_type") == "prayer_relative" else None,
+        "prayer_offset_minutes": int(data.get("prayer_offset_minutes", 0)),
+        "days_of_week": list(data.get("days_of_week") if data.get("days_of_week") is not None else [0, 1, 2, 3, 4, 5, 6]),
+        "is_active": bool(data.get("is_active", True)),
+        "updated_at": now_iso,
+    }
+    if "created_at" in data:
+        clean_data["created_at"] = data["created_at"]
+    else:
+        clean_data["created_at"] = _POLL_CONFIGS_CACHE.get(poll_id, {}).get("created_at", now_iso)
+
+    _POLL_CONFIGS_CACHE[poll_id] = clean_data
+    _save_local_poll_configs(_POLL_CONFIGS_CACHE)
+
+    if _SUPABASE_POLL_CONFIGS_AVAILABLE:
+        try:
+            _sb().table("poll_configs").upsert(clean_data).execute()
+        except Exception as exc:
+            log.warning("Could not persist poll_config %s to Supabase: %s", poll_id, exc)
+
+    return clean_data
+
+def delete_poll_config(poll_id: str) -> bool:
+    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    existed = poll_id in _POLL_CONFIGS_CACHE
+    _POLL_CONFIGS_CACHE.pop(poll_id, None)
+    _save_local_poll_configs(_POLL_CONFIGS_CACHE)
+
+    if _SUPABASE_POLL_CONFIGS_AVAILABLE:
+        try:
+            _sb().table("poll_configs").delete().eq("id", poll_id).execute()
+        except Exception as exc:
+            log.warning("Could not delete poll_config %s from Supabase: %s", poll_id, exc)
+    return existed
+
+def get_practice_info(practice_key: str) -> dict:
+    conf = get_poll_config(practice_key)
+    if conf:
+        return {
+            "label": conf.get("title", practice_key),
+            "title": conf.get("title", practice_key),
+            "poll_options": conf.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"],
+            "weight": conf.get("weight", 1),
+            "poll_type": conf.get("poll_type", "amal_poll"),
+        }
+    from practices import PRACTICES
+    p = PRACTICES.get(practice_key, {})
+    return {
+        "label": p.get("label", practice_key),
+        "title": p.get("label", practice_key),
+        "poll_options": p.get("poll_options", ["Alhamdulillah, done", "Incomplete/Missed"]),
+        "weight": get_practice_weight(practice_key),
+        "poll_type": "amal_poll",
+    }
+
+def get_practice_weight(practice_key: str) -> int:
+    conf = get_poll_config(practice_key)
+    if conf and conf.get("weight") is not None:
+        return int(conf["weight"])
+    from practices import AMAL_WEIGHTS
+    return AMAL_WEIGHTS.get(practice_key, 1)
+
+def get_scheduled_weekdays(practice_key: str) -> set[int]:
+    conf = get_poll_config(practice_key)
+    if conf and conf.get("days_of_week") is not None:
+        return set(conf["days_of_week"])
+    from practices import SCHEDULED_WEEKDAYS
+    return SCHEDULED_WEEKDAYS.get(practice_key, {0, 1, 2, 3, 4, 5, 6})
+
+def get_weekly_max(practice_key: str) -> int:
+    days = get_scheduled_weekdays(practice_key)
+    if days:
+        return len(days)
+    return WEEKLY_MAX.get(practice_key, 7)
 
 
 # ============================================================
@@ -231,21 +630,36 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
         report_end -= datetime.timedelta(days=1)
     report_start = report_end - datetime.timedelta(days=1)
 
-    scheduled_practices = [
-        "evening_dhikr",
-        "salawat_on_rasulullah",
-        "nightly_al_mulk",
-        "nightly_as_sajdah",
-        "nightly_al_baqarah_last_2",
-        "nightly_33_tasbeeh",
-    ]
-    if report_start.weekday() == 3:    # Thursday
-        scheduled_practices.append("surah_kahf")
-    scheduled_practices.extend(
-        ["tahajjud", "morning_dhikr", "fazr_jamaat", "ishraq_salat", "quran", "istighfar_100x"]
-    )
-    if report_end.weekday() in (0, 3):  # Monday, Thursday
-        scheduled_practices.append("sawm")
+    # Build scheduled practices dynamically from active poll configs
+    active_configs = get_all_poll_configs(active_only=True)
+    scheduled_practices: list[str] = []
+    for c in active_configs:
+        if c.get("poll_type", "amal_poll") != "amal_poll":
+            continue
+        days = c.get("days_of_week") or [0, 1, 2, 3, 4, 5, 6]
+        if (report_end.weekday() in days) or (report_start.weekday() in days):
+            scheduled_practices.append(c["id"])
+
+    # Fallback if no configs loaded yet
+    if not scheduled_practices:
+        scheduled_practices = [
+            "evening_dhikr",
+            "salawat_on_rasulullah",
+            "nightly_al_mulk",
+            "nightly_as_sajdah",
+            "nightly_al_baqarah_last_2",
+            "nightly_33_tasbeeh",
+            "tahajjud",
+            "morning_dhikr",
+            "fazr_jamaat",
+            "ishraq_salat",
+            "quran",
+            "istighfar_100x",
+        ]
+        if report_start.weekday() == 3:
+            scheduled_practices.append("surah_kahf")
+        if report_end.weekday() in (0, 3):
+            scheduled_practices.append("sawm")
 
     try:
         res = (
@@ -400,9 +814,8 @@ def _is_consecutive_scheduled(
 ) -> bool:
     """Return True if prev_date and cur_date are consecutive *scheduled*
     dates for this practice (e.g. consecutive Mon/Thu for sawm)."""
-    from practices import SCHEDULED_WEEKDAYS
-    allowed = SCHEDULED_WEEKDAYS.get(practice)
-    if not allowed:
+    allowed = get_scheduled_weekdays(practice)
+    if not allowed or len(allowed) == 7:
         return False
     prev_was_scheduled = prev_date.weekday() in allowed
     cur_was_scheduled = cur_date.weekday() in allowed

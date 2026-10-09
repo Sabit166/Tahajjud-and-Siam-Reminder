@@ -60,13 +60,20 @@ async def main_async(target: str):
     elif target == "weekly_report":
         await send_weekly_report(bot)
         print("✅ Successfully sent Weekly Report!")
-    elif target in PRACTICES:
-        label = PRACTICES[target]["label"]
-        await send_checkin(bot, target)
-        print(f"✅ Successfully sent '{label}' check-in poll!")
     else:
-        print(f"ERROR: Unknown target '{target}'. Use --list to see available options.", file=sys.stderr)
-        sys.exit(1)
+        from db import get_poll_config
+        conf = get_poll_config(target)
+        if conf:
+            label = conf.get("title", target)
+            await send_checkin(bot, target)
+            print(f"✅ Successfully sent '{label}' check-in poll!")
+        elif target in PRACTICES:
+            label = PRACTICES[target]["label"]
+            await send_checkin(bot, target)
+            print(f"✅ Successfully sent '{label}' check-in poll!")
+        else:
+            print(f"ERROR: Unknown target '{target}'. Use --list to see available options.", file=sys.stderr)
+            sys.exit(1)
 
 
 def main():
@@ -99,9 +106,11 @@ Examples:
         for act, desc in SPECIAL_ACTIONS.items():
             print(f"  {act:<20} - {desc}")
 
-        print("\n=== Practice Polls ===")
-        for key, info in PRACTICES.items():
-            print(f"  {key:<20} - {info['label']}")
+        print("\n=== Configured Polls & Schedules ===")
+        from db import get_all_poll_configs
+        configs = get_all_poll_configs()
+        for c in configs:
+            print(f"  {c['id']:<26} - {c.get('title')} ({c.get('time_type')})")
         print()
         if not args.target:
             sys.exit(0)

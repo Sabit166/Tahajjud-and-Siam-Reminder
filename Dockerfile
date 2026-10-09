@@ -8,6 +8,9 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY config.py practices.py db.py scheduling.py hadith.py prayer_times.py messaging.py jobs.py handlers.py scheduler.py main.py ./
+COPY config.py practices.py db.py scheduling.py hadith.py prayer_times.py messaging.py jobs.py handlers.py scheduler.py main.py web_server.py poll_configs.json ./
+COPY static ./static
+
+EXPOSE 8000
 
 CMD ["python", "main.py"]

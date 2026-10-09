@@ -6,15 +6,17 @@ The bot is split into focused modules instead of one large script:
 
 | File | Responsibility |
 |---|---|
-| `main.py` | Entrypoint — wires everything together and starts polling |
+| `main.py` | Entrypoint — wires bot, scheduler, and FastAPI web server |
+| `web_server.py` | FastAPI REST API and mobile web interface backend |
+| `static/` | Mobile-first SPA frontend (`index.html`, `styles.css`, `app.js`) |
 | `config.py` | Env loading, settings/constants, logging setup |
-| `practices.py` | Static data: practice definitions, labels, poll options |
-| `db.py` | Supabase (PostgREST) client: schema, active-poll tracking, response/report queries |
+| `practices.py` | Practice definitions, labels, poll options fallback |
+| `db.py` | Supabase client & dynamic poll configurations storage with local fallback |
 | `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
 | `messaging.py` | Builds and sends check-in polls, reports, and Jumu'ah reminders |
 | `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
-| `handlers.py` | Telegram update handlers (poll answers, new member welcome) |
-| `scheduler.py` | Registers all recurring jobs (`setup_scheduler`) |
+| `handlers.py` | Telegram update handlers (poll answers, new member welcome, `/admin` command) |
+| `scheduler.py` | Registers recurring jobs with dynamic schedule evaluation |
 | `send_now.py` | CLI tool to manually dispatch any poll or reminder on-demand |
 
 Leaderboard weights are configured in `practices.py`. The current weights are:
@@ -46,13 +48,24 @@ Practices without a configured weight retain the original weight of 1.
 pip install -r requirements.txt
 ```
 
-3. Start the bot:
-
 ```powershell
 python main.py
 ```
 
-### Trigger Polls / Reminders Manually
+### 📱 Mobile Web Dashboard & Poll Manager
+
+When the bot starts, the built-in FastAPI web dashboard automatically starts on `http://localhost:8000` (or your configured `PORT`/`WEB_PORT`).
+
+- **Mobile Web Access**: Open `http://<your-server-ip>:8000` in any phone browser.
+- **PIN Protected**: Default PIN is `7860` (change via `ADMIN_PIN=...` in `.env`).
+- **Telegram Mini App**: Admins can type `/admin` or `/dashboard` in Telegram to receive a one-tap Mini App button (when `WEB_APP_URL` is set).
+- **Features**:
+  - Live Dhaka clock and today's Aladhan prayer times carousel (Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha).
+  - Add new polls, edit existing schedules, or delete/pause polls.
+  - Set **Fixed clock times** (e.g. `10:00 AM`) or **Prayer-relative times** (e.g. `30 min after Maghrib`, `10 min before Dhuhr`) with live calculation preview!
+  - Choose active days of the week (Daily, Mon & Thu for Sawm, Friday for Kahf, or custom).
+  - Configure leaderboard marks/weights and custom poll answer options.
+  - ⚡ **Send Now** button to test and dispatch any poll or report immediately to Telegram with toast confirmation.
 
 You can dispatch any poll or reminder immediately from your terminal without waiting for the scheduler:
 

@@ -44,6 +44,15 @@ RESPONSE_DELETE_AFTER_SECONDS = 10
 DAILY_REPORT_HOUR = 18
 DAILY_REPORT_MINUTE = 30
 
+# Web server and mobile admin dashboard settings
+WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+WEB_PORT = int(os.getenv("WEB_PORT", os.getenv("PORT", "8000")))
+WEB_APP_URL = os.getenv("WEB_APP_URL", "").rstrip("/")
+ADMIN_PIN = os.getenv("ADMIN_PIN", os.getenv("ADMIN_PASSWORD", "7860"))
+ADMIN_USER_IDS = [
+    int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().isdigit()
+]
+
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO

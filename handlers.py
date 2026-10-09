@@ -29,9 +29,10 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     practice_key = get_poll_practice(poll_id)
 
-    if practice_key in PRACTICES:
-        p_info = PRACTICES[practice_key]
-        label = p_info.get("label", practice_key)
+    if practice_key:
+        from db import get_practice_info, get_practice_weight
+        p_info = get_practice_info(practice_key)
+        label = p_info.get("label") or p_info.get("title", practice_key)
 
         if not answer.option_ids:
             log.info(f"User {full_name} retracted vote for {label}")
@@ -46,7 +47,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         update_streak_for_response(user.id, practice_key, scheduled_date, bool(did_it))
 
         if did_it:
-            points = AMAL_WEIGHTS.get(practice_key, 1)
+            points = get_practice_weight(practice_key)
             reply = f"MashaAllah --- {full_name} --- {label} (+{points})"
         else:
             reply = f"InshaAllah next time --- {full_name} --- {label}"
@@ -60,6 +61,44 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     else:
         log.info(f"Received poll answer from {full_name} for untracked poll ID {poll_id}")
+
+
+async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /admin or /dashboard command by providing a Web App button and URL."""
+    from config import WEB_APP_URL, WEB_PORT
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat:
+        return
+
+    text = (
+        "🌿 *Dhikr & Tahajjud Bot — Poll & Schedule Manager*\n\n"
+        "Manage all present and new polls, fixed or prayer-relative times, "
+        "and dispatch manual check-ins right from your mobile phone."
+    )
+
+    reply_markup = None
+    if WEB_APP_URL:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "📱 Open Poll Dashboard",
+                    web_app=WebAppInfo(url=WEB_APP_URL),
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+    else:
+        text += f"\n\n🔗 Dashboard is running on port `{WEB_PORT}`.\nSet `WEB_APP_URL` in `.env` to enable one-tap Telegram Mini App button!"
+
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=reply_markup,
+    )
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message

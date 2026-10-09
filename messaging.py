@@ -29,12 +29,14 @@ from prayer_times import (
 # ============================================================
 
 async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
-    p = PRACTICES[practice_key]
-    question = p["label"]
+    from db import get_practice_info
+    p = get_practice_info(practice_key)
+    question = p.get("label") or p.get("title", practice_key)
+    options = p.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"]
     sent_message = await bot.send_poll(
         chat_id=GROUP_CHAT_ID,
         question=question,
-        options=p["poll_options"],
+        options=options,
         is_anonymous=False,
         allows_multiple_answers=False,
     )
@@ -42,9 +44,9 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
         save_active_poll(sent_message.poll.id, practice_key)
 
     if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Check-in poll for {p['label']} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_poll_close(job_queue, sent_message, p['label'])
-    log.info(f"Sent check-in poll: {p['label']}")
+        log.info(f"Check-in poll for {question} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
+        schedule_poll_close(job_queue, sent_message, question)
+    log.info(f"Sent check-in poll: {question}")
 
 async def send_nightly_amal(bot: Bot, job_queue=None):
     for key in NIGHTLY_AMAL_OPTIONS:
@@ -119,8 +121,9 @@ def _report_label(practice: str) -> str:
         return "33 - 33 - 34"
     if practice == "nightly_al_baqarah_last_2":
         return "Surat Al-Baqarah (Last 2)"
-    p_info = PRACTICES.get(practice, {})
-    return p_info.get("label", practice)
+    from db import get_practice_info
+    p_info = get_practice_info(practice)
+    return p_info.get("label") or p_info.get("title", practice)
 
 
 # Telegram caps send_message at 4096 chars. We split a long report by
@@ -182,6 +185,8 @@ async def send_weekly_report(bot: Bot):
         )
         return
 
+    from db import get_practice_weight, get_weekly_max, get_all_poll_configs
+
     # Group rows by user. Each amal (including each nightly sub-practice)
     # counts as its OWN mark — no grouping/collapsing.
     user_data: dict[str, dict[str, int]] = {}
@@ -195,7 +200,7 @@ async def send_weekly_report(bot: Bot):
     for full_name, data in user_data.items():
         # Sum completed practices using each amal's leaderboard weight.
         total = sum(
-            completed * AMAL_WEIGHTS.get(practice, 1)
+            completed * get_practice_weight(practice)
             for practice, completed in data.items()
         )
         user_weekly_marks[full_name] = total
@@ -204,14 +209,19 @@ async def send_weekly_report(bot: Bot):
         present = set(data.keys())
         if present:
             user_max_marks[full_name] = sum(
-                WEEKLY_MAX.get(p, 7) * AMAL_WEIGHTS.get(p, 1)
+                get_weekly_max(p) * get_practice_weight(p)
                 for p in present
             )
         else:
+            active_amals = [
+                c["id"]
+                for c in get_all_poll_configs(active_only=True)
+                if c.get("poll_type", "amal_poll") == "amal_poll"
+            ]
             user_max_marks[full_name] = sum(
-                max_marks * AMAL_WEIGHTS.get(practice, 1)
-                for practice, max_marks in WEEKLY_MAX.items()
-            )
+                get_weekly_max(p) * get_practice_weight(p)
+                for p in active_amals
+            ) or 100
 
     # Sort users by marks desc, then name asc for stable tie-breaking.
     sorted_users = sorted(
@@ -224,8 +234,8 @@ async def send_weekly_report(bot: Bot):
         block = f"{rank}. {full_name} (Marks {marks}/{user_max_marks[full_name]})\n"
         for practice, completed in sorted(user_data[full_name].items()):
             label = _report_label(practice)
-            max_n = WEEKLY_MAX.get(practice, 7)
-            weight = AMAL_WEIGHTS.get(practice, 1)
+            max_n = get_weekly_max(practice)
+            weight = get_practice_weight(practice)
             bar = "🟩" * completed + "⬜" * max(0, max_n - completed)
             block += f"  -- {label}:\n"
             block += f"  {bar} {completed}/{max_n} ({completed * weight}/{max_n * weight} marks)\n"
@@ -250,18 +260,18 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
         )
         return
 
-    # Compute weighted per-user marks. Each nightly sub-practice remains an
-    # independent amal and contributes its own configured weight.
+    # Compute weighted per-user marks. Each practice contributes its configured weight.
+    from db import get_practice_weight
     user_marks: dict[str, int] = {}
     for full_name, results in summary.items():
         marks = 0
         for practice in scheduled_practices:
             if results.get(practice, 0):
-                marks += AMAL_WEIGHTS.get(practice, 1)
+                marks += get_practice_weight(practice)
         user_marks[full_name] = marks
 
     full_marks = sum(
-        AMAL_WEIGHTS.get(practice, 1) for practice in scheduled_practices
+        get_practice_weight(practice) for practice in scheduled_practices
     )
     sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], kv[0]))
 
@@ -353,7 +363,7 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
 
 
 async def _prayer_schedule_tick(context):
-    """Dispatch all prayer-relative practices and reports."""
+    """Dispatch all dynamic prayer-relative and fixed-time practices, reports, and reminders."""
     now = _dt.datetime.now(BD_TZ)
     today = now.date()
     try:
@@ -363,29 +373,64 @@ async def _prayer_schedule_tick(context):
         return
 
     def at(name: str, offset: _dt.timedelta = _dt.timedelta()) -> _dt.datetime:
-        return dt_with_tz(getattr(timings, name), base=today) + offset
+        return dt_with_tz(getattr(timings, name.lower()), base=today) + offset
 
-    sunrise = at("sunrise")
-    maghrib = at("maghrib")
-    events = [
-        ("morning_dhikr", sunrise),
-        ("fazr_jamaat", sunrise),
-        ("ishraq_salat", sunrise),
-        ("salawat_on_rasulullah", maghrib + _dt.timedelta(minutes=30)),
-        ("evening_dhikr", maghrib + _dt.timedelta(minutes=30)),
-        ("nightly_amal", at("isha", _dt.timedelta(minutes=30))),
-        ("tahajjud", at("fajr", _dt.timedelta(minutes=-30))),
-        ("daily_report", maghrib + _dt.timedelta(minutes=2)),
-    ]
-    if today.weekday() in (0, 3):
-        events.append(("sawm", at("fajr", _dt.timedelta(minutes=-30))))
-    if today.weekday() == 4:
-        events.extend([
-            ("surah_kahf", at("dhuhr")),
-            ("weekly_report", maghrib + _dt.timedelta(minutes=5)),
-        ])
-    if today.weekday() == 3:
-        events.append(("jumuah_reminder", maghrib + _dt.timedelta(minutes=10)))
+    from db import get_all_poll_configs
+    configs = get_all_poll_configs(active_only=True)
+
+    events: list[tuple[str, _dt.datetime]] = []
+
+    for conf in configs:
+        days = conf.get("days_of_week")
+        if days is None:
+            days = [0, 1, 2, 3, 4, 5, 6]
+        if today.weekday() not in days:
+            continue
+
+        cid = conf["id"]
+        time_type = conf.get("time_type", "prayer_relative")
+
+        if time_type == "fixed" and conf.get("fixed_time"):
+            try:
+                parts = str(conf["fixed_time"]).strip().split(":")
+                hour, minute = int(parts[0]), int(parts[1])
+                target_naive = _dt.datetime.combine(today, _dt.time(hour, minute))
+                target_dt = BD_TZ.localize(target_naive)
+                events.append((cid, target_dt))
+            except Exception as exc:
+                log.warning("Invalid fixed_time '%s' for %s: %s", conf.get("fixed_time"), cid, exc)
+        elif time_type == "prayer_relative" and conf.get("prayer_name"):
+            p_name = str(conf["prayer_name"]).lower().strip()
+            offset_mins = int(conf.get("prayer_offset_minutes", 0))
+            try:
+                target_dt = at(p_name, _dt.timedelta(minutes=offset_mins))
+                events.append((cid, target_dt))
+            except Exception as exc:
+                log.warning("Error calculating prayer time for %s: %s", cid, exc)
+
+    # Fallback to hardcoded events if configs are empty
+    if not events:
+        sunrise = at("sunrise")
+        maghrib = at("maghrib")
+        events = [
+            ("morning_dhikr", sunrise),
+            ("fazr_jamaat", sunrise),
+            ("ishraq_salat", sunrise),
+            ("salawat_on_rasulullah", maghrib + _dt.timedelta(minutes=30)),
+            ("evening_dhikr", maghrib + _dt.timedelta(minutes=30)),
+            ("nightly_amal", at("isha", _dt.timedelta(minutes=30))),
+            ("tahajjud", at("fajr", _dt.timedelta(minutes=-30))),
+            ("daily_report", maghrib + _dt.timedelta(minutes=2)),
+        ]
+        if today.weekday() in (0, 3):
+            events.append(("sawm", at("fajr", _dt.timedelta(minutes=-30))))
+        if today.weekday() == 4:
+            events.extend([
+                ("surah_kahf", at("dhuhr")),
+                ("weekly_report", maghrib + _dt.timedelta(minutes=5)),
+            ])
+        if today.weekday() == 3:
+            events.append(("jumuah_reminder", maghrib + _dt.timedelta(minutes=10)))
 
     for event, event_at in events:
         await _dispatch_scheduled_event(context, event, event_at)
