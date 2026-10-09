@@ -8,6 +8,10 @@
 
   // --- API & Auth State ---
   const API_BASE = '';
+  const setupToken = new URLSearchParams(window.location.search).get('setup_token');
+  if (setupToken) {
+    localStorage.removeItem('admin_token');
+  }
   let authToken = localStorage.getItem('admin_token') || '';
   let allPolls = [];
   let prayerTimings = {};
@@ -947,7 +951,7 @@
         body: JSON.stringify({
           pin: isTelegramWebApp ? null : authToken,
           telegram_init_data: isTelegramWebApp ? window.Telegram.WebApp.initData : null,
-          setup_token: new URLSearchParams(window.location.search).get('setup_token'),
+          setup_token: setupToken,
         }),
       });
 

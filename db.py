@@ -94,18 +94,10 @@ def init_db():
 
 
 def register_group(chat_id: int, title: str | None = None, username: str | None = None) -> dict:
-    """Register/update a Telegram group. The configured legacy group is seeded too."""
+    """Register/update a Telegram group without creating default poll configs."""
     payload = {"chat_id": int(chat_id), "title": title, "username": username, "is_active": True}
     try:
-        result = (_sb().table("groups").upsert(payload, on_conflict="chat_id").execute().data or [payload])[0]
-        configs = _sb().table("poll_configs").select("id").eq("group_chat_id", int(chat_id)).limit(1).execute()
-        if not configs.data:
-            for item in DEFAULT_POLL_CONFIGS:
-                _sb().table("poll_configs").upsert(
-                    {**item, "group_chat_id": int(chat_id)},
-                    on_conflict="group_chat_id,id",
-                ).execute()
-        return result
+        return (_sb().table("groups").upsert(payload, on_conflict="chat_id").execute().data or [payload])[0]
     except Exception as exc:
         log.warning("Could not register group %s: %s", chat_id, exc)
         return payload
@@ -500,9 +492,11 @@ def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = 
         except Exception as exc:
             log.warning("Failed to refresh poll_configs from Supabase, using cache: %s", exc)
 
-    if _POLL_CONFIGS_CACHE_GROUP != group_id or not _POLL_CONFIGS_CACHE:
+    if _POLL_CONFIGS_CACHE_GROUP != group_id and not _SUPABASE_POLL_CONFIGS_AVAILABLE:
         _POLL_CONFIGS_CACHE = _load_local_poll_configs()
         _POLL_CONFIGS_CACHE_GROUP = group_id
+    elif not _SUPABASE_POLL_CONFIGS_AVAILABLE and not _POLL_CONFIGS_CACHE:
+        _POLL_CONFIGS_CACHE = _load_local_poll_configs()
 
     items = list(_POLL_CONFIGS_CACHE.values())
     for item in items:
