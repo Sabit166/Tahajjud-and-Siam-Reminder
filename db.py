@@ -128,6 +128,32 @@ def issue_setup_token(chat_id: int, user_id: int, ttl_minutes: int = 10) -> str:
     return token
 
 
+def get_setup_token(token: str, user_id: int) -> dict | None:
+    try:
+        row = (
+            _sb()
+            .table("setup_tokens")
+            .select("*")
+            .eq("token", token)
+            .eq("issued_by", int(user_id))
+            .is_("consumed_at", "null")
+            .limit(1)
+            .execute()
+            .data
+            or [None]
+        )[0]
+        if not row:
+            return None
+        expires_at = datetime.datetime.fromisoformat(
+            row["expires_at"].replace("Z", "+00:00")
+        )
+        if expires_at <= datetime.datetime.now(datetime.timezone.utc):
+            return None
+        return row
+    except Exception:
+        return None
+
+
 def consume_setup_token(token: str, user_id: int | None = None) -> dict | None:
     try:
         query = _sb().table("setup_tokens").select("*").eq("token", token).is_("consumed_at", "null")

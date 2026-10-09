@@ -26,7 +26,13 @@ from config import (
     log,
 )
 from db import init_db, cleanup_old_active_polls
-from handlers import handle_poll_answer, handle_new_member, handle_admin_command, handle_my_chat_member
+from handlers import (
+    handle_poll_answer,
+    handle_new_member,
+    handle_admin_command,
+    handle_start,
+    handle_my_chat_member,
+)
 from scheduler import setup_scheduler
 from web_server import app as web_app, set_bot_instance
 
@@ -48,6 +54,7 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler(["admin", "setup", "dashboard", "polls"], handle_admin_command))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
