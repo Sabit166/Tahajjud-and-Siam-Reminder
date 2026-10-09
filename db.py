@@ -589,10 +589,26 @@ def save_active_poll(poll_id: str, practice_key: str, group_chat_id: int | None 
     _ACTIVE_POLL_CACHE[(group_id, poll_id)] = practice_key
     try:
         _sb().table("active_polls").upsert(
-            {"poll_id": poll_id, "practice_key": practice_key, "group_chat_id": group_id}
+            {
+                "poll_id": poll_id,
+                "practice_key": practice_key,
+                "group_chat_id": group_id,
+            },
+            on_conflict="group_chat_id,poll_id",
         ).execute()
+        log.info(
+            "Registered active poll %s for group %s (%s).",
+            poll_id,
+            group_id,
+            practice_key,
+        )
     except Exception as exc:
-        log.warning("Could not save active poll %s: %s", poll_id, exc)
+        log.error(
+            "Could not save active poll %s for group %s: %s",
+            poll_id,
+            group_id,
+            exc,
+        )
 
 
 def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optional[str]:
