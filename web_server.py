@@ -289,6 +289,8 @@ async def list_polls(_=Depends(require_group)):
 async def create_poll(payload: PollConfigPayload, _=Depends(verify_admin)):
     """Create a new poll or scheduled item."""
     data = payload.model_dump()
+    if data["poll_type"] == "amal_poll" and len(data["poll_options"]) != 2:
+        raise HTTPException(status_code=422, detail="Amal polls require exactly two answer options")
     poll_id = data.get("id")
     if not poll_id:
         # Generate safe slug id
@@ -322,6 +324,8 @@ async def update_poll(poll_id: str, payload: PollConfigPayload, _=Depends(verify
         raise HTTPException(status_code=404, detail=f"Poll '{poll_id}' not found")
 
     data = payload.model_dump()
+    if data["poll_type"] == "amal_poll" and len(data["poll_options"]) != 2:
+        raise HTTPException(status_code=422, detail="Amal polls require exactly two answer options")
     data["id"] = poll_id
     saved = upsert_poll_config(data)
     log.info("Updated poll config: %s (%s)", saved["title"], saved["id"])

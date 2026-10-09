@@ -728,42 +728,22 @@
   });
 
   // Dynamic Poll Options
+  addOptionBtn.style.display = 'none';
+
   function renderOptionsInputs(options) {
     optionsListContainer.innerHTML = '';
-    options.forEach((optText, index) => {
+    options.slice(0, 2).forEach((optText, index) => {
       const row = document.createElement('div');
       row.className = 'option-row';
       row.innerHTML = `
         <input type="text" class="form-control form-option-input" value="${escapeHtml(optText)}" placeholder="Option ${index + 1}" required>
-        ${
-          options.length > 2
-            ? '<button type="button" class="option-remove-btn" title="Remove option">✕</button>'
-            : ''
-        }
       `;
-      if (options.length > 2) {
-        row.querySelector('.option-remove-btn').addEventListener('click', () => {
-          row.remove();
-        });
-      }
       optionsListContainer.appendChild(row);
     });
   }
 
   addOptionBtn.addEventListener('click', () => {
-    triggerHaptic('light');
-    const row = document.createElement('div');
-    row.className = 'option-row';
-    const count = optionsListContainer.children.length + 1;
-    row.innerHTML = `
-      <input type="text" class="form-control form-option-input" placeholder="Option ${count}" required>
-      <button type="button" class="option-remove-btn" title="Remove option">✕</button>
-    `;
-    row.querySelector('.option-remove-btn').addEventListener('click', () => {
-      row.remove();
-    });
-    optionsListContainer.appendChild(row);
-    row.querySelector('input').focus();
+    showToast('Polls support exactly two answer options.', 'error');
   });
 
   // Form Submit (Save / Create)
@@ -798,8 +778,8 @@
         const val = inp.value.trim();
         if (val) options.push(val);
       });
-      if (options.length < 2) {
-        showToast('Polls require at least 2 answer options', 'error');
+      if (options.length !== 2) {
+        showToast('Polls require exactly 2 answer options', 'error');
         return;
       }
     }

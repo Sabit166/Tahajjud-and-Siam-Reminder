@@ -428,6 +428,13 @@ DEFAULT_POLL_CONFIGS: list[dict] = [
     },
 ]
 
+DEFAULT_BINARY_OPTIONS = ["Alhamdulillah, done", "Incomplete/Missed"]
+
+
+def _binary_options(options: object) -> list[str]:
+    values = [str(option).strip() for option in (options or []) if str(option).strip()]
+    return values[:2] if len(values) >= 2 else list(DEFAULT_BINARY_OPTIONS)
+
 def _load_local_poll_configs() -> dict[str, dict]:
     if POLL_CONFIGS_FILE.exists():
         try:
@@ -498,6 +505,9 @@ def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = 
         _POLL_CONFIGS_CACHE_GROUP = group_id
 
     items = list(_POLL_CONFIGS_CACHE.values())
+    for item in items:
+        if item.get("poll_type", "amal_poll") == "amal_poll":
+            item["poll_options"] = _binary_options(item.get("poll_options"))
     if active_only:
         items = [i for i in items if i.get("is_active", True)]
     return items
@@ -524,7 +534,7 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
         "id": poll_id,
         "title": str(data.get("title", "")),
         "poll_type": str(data.get("poll_type", "amal_poll")),
-        "poll_options": list(data.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"]),
+        "poll_options": _binary_options(data.get("poll_options")),
         "weight": int(data.get("weight", 1)),
         "time_type": str(data.get("time_type", "prayer_relative")),
         "fixed_time": data.get("fixed_time") if data.get("time_type") == "fixed" else None,
@@ -572,7 +582,7 @@ def get_practice_info(practice_key: str) -> dict:
         return {
             "label": conf.get("title", practice_key),
             "title": conf.get("title", practice_key),
-            "poll_options": conf.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"],
+            "poll_options": _binary_options(conf.get("poll_options")),
             "weight": conf.get("weight", 1),
             "poll_type": conf.get("poll_type", "amal_poll"),
         }
