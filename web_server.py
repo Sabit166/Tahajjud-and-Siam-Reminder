@@ -28,7 +28,7 @@ from db import (
     upsert_poll_config,
     delete_poll_config,
     get_practice_info,
-    get_session, issue_session, consume_setup_token, set_current_group,
+    get_session, issue_session, consume_setup_token, set_current_group, clear_current_group,
     register_group,
 )
 from prayer_times import fetch_prayer_times, dt_with_tz
@@ -210,7 +210,9 @@ async def verify_auth(req: AuthRequest):
     if not setup:
         raise HTTPException(403, "Invalid, expired, or unauthorized setup token")
     chat_id = int(setup["chat_id"])
+    clear_current_group()
     register_group(chat_id)
+    set_current_group(chat_id)
     return {"authenticated": True, "token": issue_session(chat_id, int(user["id"])), "group_chat_id": chat_id}
 
 

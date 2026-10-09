@@ -36,9 +36,27 @@ _current_group_id: contextvars.ContextVar[int] = contextvars.ContextVar(
 )
 
 
+def clear_current_group() -> None:
+    """Drop any stale per-request group context before switching tenants."""
+    previous_group = int(_current_group_id.get())
+    if previous_group:
+        _POLL_CONFIGS_CACHE.pop(previous_group, None)
+        for (group_id, poll_id) in list(_ACTIVE_POLL_CACHE):
+            if group_id == previous_group:
+                _ACTIVE_POLL_CACHE.pop((group_id, poll_id), None)
+    _current_group_id.set(0)
+
+
 def set_current_group(group_chat_id: int):
     """Set the tenant used by legacy helpers that do not receive a group id."""
-    return _current_group_id.set(int(group_chat_id))
+    next_group = int(group_chat_id)
+    previous_group = int(_current_group_id.get())
+    if previous_group and previous_group != next_group:
+        _POLL_CONFIGS_CACHE.pop(previous_group, None)
+        for (group_id, poll_id) in list(_ACTIVE_POLL_CACHE):
+            if group_id == previous_group:
+                _ACTIVE_POLL_CACHE.pop((group_id, poll_id), None)
+    return _current_group_id.set(next_group)
 
 
 def current_group_id() -> int:
@@ -184,9 +202,15 @@ def get_session(token: str) -> dict | None:
 #  POLL CONFIGURATIONS (DYNAMIC SCHEDULES & PRACTICES)
 # ============================================================
 
-_POLL_CONFIGS_CACHE: dict[str, dict] = {}
-_POLL_CONFIGS_CACHE_GROUP: int | None = None
+_POLL_CONFIGS_CACHE: dict[int, dict[str, dict]] = {}
 _SUPABASE_POLL_CONFIGS_AVAILABLE: bool | None = None
+
+
+def _poll_cache_for_group(group_chat_id: int | None = None) -> dict[str, dict]:
+    group_id = _group_id(group_chat_id)
+    if group_id not in _POLL_CONFIGS_CACHE:
+        _POLL_CONFIGS_CACHE[group_id] = {}
+    return _POLL_CONFIGS_CACHE[group_id]
 
 DEFAULT_POLL_CONFIGS: list[dict] = [
     {
@@ -420,21 +444,19 @@ def _binary_options(options: object) -> list[str]:
     return values[:2] if len(values) >= 2 else list(DEFAULT_BINARY_OPTIONS)
 
 def seed_initial_poll_configs():
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE, _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP
-    _POLL_CONFIGS_CACHE = {}
-    _POLL_CONFIGS_CACHE_GROUP = current_group_id()
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE
+    group_id = current_group_id()
+    _POLL_CONFIGS_CACHE[group_id] = {}
 
     try:
-        res = _sb().table("poll_configs").select("id").eq("group_chat_id", current_group_id()).limit(1).execute()
+        _sb().table("poll_configs").select("id").eq("group_chat_id", group_id).limit(1).execute()
         _SUPABASE_POLL_CONFIGS_AVAILABLE = True
 
-        count_res = _sb().table("poll_configs").select("*").eq("group_chat_id", current_group_id()).execute()
-        rows = count_res.data or []
-        _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
-        log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE))
+        rows = (_sb().table("poll_configs").select("*").eq("group_chat_id", group_id).execute().data or [])
+        _POLL_CONFIGS_CACHE[group_id] = {row["id"]: row for row in rows}
+        log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE[group_id]))
     except Exception as exc:
-        _POLL_CONFIGS_CACHE = {}
-        _POLL_CONFIGS_CACHE_GROUP = group_id
+        _POLL_CONFIGS_CACHE[group_id] = {}
         _SUPABASE_POLL_CONFIGS_AVAILABLE = False
         log.info(
             "Supabase table 'poll_configs' is unavailable; no poll configurations loaded: %s",
@@ -442,17 +464,20 @@ def seed_initial_poll_configs():
         )
 
 def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = None) -> list[dict]:
-    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
+    cache = _poll_cache_for_group(group_id)
+
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
             res = _sb().table("poll_configs").select("*").eq("group_chat_id", group_id).order("created_at").execute()
-            _POLL_CONFIGS_CACHE = {row["id"]: row for row in (res.data or [])}
-            _POLL_CONFIGS_CACHE_GROUP = group_id
+            cache.clear()
+            for row in res.data or []:
+                cache[row["id"]] = row
         except Exception as exc:
             log.warning("Failed to refresh poll_configs from Supabase: %s", exc)
 
-    items = list(_POLL_CONFIGS_CACHE.values())
+    items = list(cache.values())
     for item in items:
         if item.get("poll_type", "amal_poll") == "amal_poll":
             item["poll_options"] = _binary_options(item.get("poll_options"))
@@ -462,20 +487,19 @@ def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = 
 
 def get_poll_config(poll_id: str, group_chat_id: int | None = None) -> Optional[dict]:
     group_id = _group_id(group_chat_id)
-    if _POLL_CONFIGS_CACHE_GROUP != group_id:
+    cache = _poll_cache_for_group(group_id)
+    if not cache:
         get_all_poll_configs(group_chat_id=group_id)
-    return _POLL_CONFIGS_CACHE.get(poll_id)
+    return cache.get(poll_id)
 
 def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
-    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
     poll_id = data.get("id")
     if not poll_id:
         raise ValueError("Poll configuration must have an 'id'")
 
-    if _POLL_CONFIGS_CACHE_GROUP != group_id:
-        _POLL_CONFIGS_CACHE = {}
-        _POLL_CONFIGS_CACHE_GROUP = group_id
+    cache = _poll_cache_for_group(group_id)
     now_iso = datetime.datetime.now(BD_TZ).isoformat()
     clean_data = {
         "group_chat_id": group_id,
@@ -495,9 +519,9 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
     if "created_at" in data:
         clean_data["created_at"] = data["created_at"]
     else:
-        clean_data["created_at"] = _POLL_CONFIGS_CACHE.get(poll_id, {}).get("created_at", now_iso)
+        clean_data["created_at"] = cache.get(poll_id, {}).get("created_at", now_iso)
 
-    _POLL_CONFIGS_CACHE[poll_id] = clean_data
+    cache[poll_id] = clean_data
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
             _sb().table("poll_configs").upsert(clean_data, on_conflict="group_chat_id,id").execute()
@@ -507,12 +531,11 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
     return clean_data
 
 def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
-    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
-    if _POLL_CONFIGS_CACHE_GROUP != group_id:
-        get_all_poll_configs(group_chat_id=group_id)
-    existed = poll_id in _POLL_CONFIGS_CACHE
-    _POLL_CONFIGS_CACHE.pop(poll_id, None)
+    cache = _poll_cache_for_group(group_id)
+    existed = poll_id in cache
+    cache.pop(poll_id, None)
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
             _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()

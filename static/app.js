@@ -9,10 +9,17 @@
   // --- API & Auth State ---
   const API_BASE = '';
   const setupToken = new URLSearchParams(window.location.search).get('setup_token');
+  const STORAGE_KEY = 'admin_token';
+  const clearLegacyAuth = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('telegram_init_data');
+    localStorage.removeItem('setup_token');
+  };
+
   if (setupToken) {
-    localStorage.removeItem('admin_token');
+    clearLegacyAuth();
   }
-  let authToken = localStorage.getItem('admin_token') || '';
+  let authToken = localStorage.getItem(STORAGE_KEY) || '';
   let allPolls = [];
   let prayerTimings = {};
   let currentFilter = 'all';
