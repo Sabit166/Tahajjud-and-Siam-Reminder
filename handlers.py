@@ -8,8 +8,8 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import GROUP_CHAT_ID, BD_TZ, log
-from practices import AMAL_WEIGHTS, PRACTICES, GROUP_AMAL_LABELS
+from config import BD_TZ, log
+from practices import GROUP_AMAL_LABELS
 from db import (
     get_poll_practice,
     save_response,

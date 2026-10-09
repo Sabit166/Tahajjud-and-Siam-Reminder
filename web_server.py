@@ -6,7 +6,6 @@ for managing Dhikr & Tahajjud Bot polls, schedules, and prayer-time triggers.
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import hmac
 import json
 import logging
@@ -22,13 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from telegram import Bot
 
-from config import (
-    BD_TZ,
-    ADMIN_PIN,
-    ADMIN_USER_IDS,
-    GROUP_CHAT_ID,
-    log,
-)
+from config import BD_TZ, log
 from db import (
     get_all_poll_configs,
     get_poll_config,
@@ -87,8 +80,6 @@ app.add_middleware(
 #  Authentication Models & Dependency
 # ------------------------------------------------------------
 class AuthRequest(BaseModel):
-    pin: Optional[str] = None
-    telegram_user_id: Optional[int] = None
     telegram_init_data: Optional[str] = None
     setup_token: Optional[str] = None
 
@@ -117,24 +108,11 @@ def require_group(authorization: Optional[str] = Header(None)) -> dict:
     if session:
         set_current_group(int(session["chat_id"]))
         return session
-    if not ADMIN_PIN:
-        set_current_group(GROUP_CHAT_ID)
-        return {"chat_id": GROUP_CHAT_ID, "user_id": 0}
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header",
         )
-
-    expected_token = hashlib.sha256(ADMIN_PIN.encode("utf-8")).hexdigest()
-    if token == ADMIN_PIN or token == expected_token:
-        set_current_group(GROUP_CHAT_ID)
-        return {"chat_id": GROUP_CHAT_ID, "user_id": 0}
-
-    # Check if token is authorized telegram user id
-    if token.isdigit() and int(token) in ADMIN_USER_IDS:
-        set_current_group(GROUP_CHAT_ID)
-        return {"chat_id": GROUP_CHAT_ID, "user_id": int(token)}
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -221,31 +199,19 @@ def calculate_poll_time_for_today(conf: dict, timings_dict: dict[str, str]) -> t
 @app.post("/api/auth/verify")
 async def verify_auth(req: AuthRequest):
     """Exchange Mini App initData for a group-scoped session token."""
-    if req.setup_token and not req.telegram_init_data:
+    if not req.setup_token or not req.telegram_init_data:
         raise HTTPException(
             status_code=401,
             detail="This setup link must be opened from Telegram.",
         )
 
-    if req.telegram_init_data:
-        user = validate_telegram_init_data(req.telegram_init_data)
-        setup = consume_setup_token(req.setup_token, int(user["id"])) if req.setup_token else None
-        if not setup:
-            raise HTTPException(403, "Invalid, expired, or unauthorized setup token")
-        chat_id = int(setup["chat_id"])
-        register_group(chat_id)
-        return {"authenticated": True, "token": issue_session(chat_id, int(user["id"])), "group_chat_id": chat_id}
-    if not ADMIN_PIN:
-        return {"authenticated": True, "token": "open"}
-
-    if req.pin and req.pin.strip() == ADMIN_PIN.strip():
-        token = hashlib.sha256(ADMIN_PIN.encode("utf-8")).hexdigest()
-        return {"authenticated": True, "token": issue_session(GROUP_CHAT_ID, 0), "group_chat_id": GROUP_CHAT_ID}
-
-    if req.telegram_user_id and req.telegram_user_id in ADMIN_USER_IDS:
-        return {"authenticated": True, "token": issue_session(GROUP_CHAT_ID, req.telegram_user_id), "group_chat_id": GROUP_CHAT_ID}
-
-    raise HTTPException(status_code=401, detail="Invalid PIN or unauthorized user.")
+    user = validate_telegram_init_data(req.telegram_init_data)
+    setup = consume_setup_token(req.setup_token, int(user["id"]))
+    if not setup:
+        raise HTTPException(403, "Invalid, expired, or unauthorized setup token")
+    chat_id = int(setup["chat_id"])
+    register_group(chat_id)
+    return {"authenticated": True, "token": issue_session(chat_id, int(user["id"])), "group_chat_id": chat_id}
 
 
 @app.get("/api/prayer-times")

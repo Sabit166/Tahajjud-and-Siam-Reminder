@@ -30,7 +30,6 @@ except ImportError:
 # ============================================================
 
 TOKEN = os.getenv("BOT_TOKEN", "")
-GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
 BD_TZ = pytz.timezone(os.getenv("BD_TZ", "Asia/Dhaka"))
 
 # Supabase REST endpoint and the service-role / secret key.
@@ -48,11 +47,6 @@ DAILY_REPORT_MINUTE = 30
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", os.getenv("PORT", "8000")))
 WEB_APP_URL = os.getenv("WEB_APP_URL", "").rstrip("/")
-ADMIN_PIN = os.getenv("ADMIN_PIN", os.getenv("ADMIN_PASSWORD", "7860"))
-ADMIN_USER_IDS = [
-    int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().isdigit()
-]
-
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO

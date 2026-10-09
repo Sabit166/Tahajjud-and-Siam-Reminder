@@ -17,19 +17,14 @@
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <!-- PIN Authentication Overlay -->
+  <!-- Telegram setup authentication status -->
   <div id="auth-overlay" class="auth-overlay" style="display: none;">
     <div class="auth-card">
       <div class="auth-bismillah">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>
       <div class="auth-icon">🔒</div>
-      <h2 class="auth-title">Admin Access</h2>
-      <p class="auth-subtitle">Enter your Admin PIN to manage Dhikr & Tahajjud polls and schedules.</p>
-      
-      <div class="pin-input-group">
-        <input type="password" id="pin-input" placeholder="Enter PIN" inputmode="numeric" maxlength="20" autofocus autocomplete="current-password">
-        <button id="pin-submit-btn" class="btn btn-primary">Unlock</button>
-      </div>
-      <div id="auth-error" class="auth-error" style="display: none;">Invalid PIN. Please try again.</div>
+      <h2 class="auth-title">Telegram Setup Required</h2>
+      <p class="auth-subtitle">Open this dashboard from the setup link sent by the bot in Telegram.</p>
+      <div id="auth-error" class="auth-error" style="display: none;"></div>
     </div>
   </div>
 

@@ -10,8 +10,8 @@ import datetime as _dt
 
 from telegram import Bot
 
-from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, BD_TZ, log
-from practices import AMAL_WEIGHTS, PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
+from config import RESPONSE_WINDOW_HOURS, BD_TZ, log
+from practices import NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX, current_group_id
 from scheduling import schedule_poll_close
 from hadith import fetch_hadith, format_hadith_message

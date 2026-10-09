@@ -10,14 +10,13 @@ The bot is split into focused modules instead of one large script:
 | `web_server.py` | FastAPI REST API and mobile web interface backend |
 | `static/` | Mobile-first SPA frontend (`index.html`, `styles.css`, `app.js`) |
 | `config.py` | Env loading, settings/constants, logging setup |
-| `practices.py` | Practice definitions, labels, poll options fallback |
-| `db.py` | Supabase client & dynamic poll configurations storage with local fallback |
+| `practices.py` | Practice labels and leaderboard constants |
+| `db.py` | Supabase client and group-scoped configuration storage |
 | `scheduling.py` | Low-level JobQueue helpers for closing polls / deleting messages after a delay |
 | `messaging.py` | Builds and sends check-in polls, reports, and Jumu'ah reminders |
 | `jobs.py` | JobQueue callback wrappers that trigger check-ins and reports on schedule |
 | `handlers.py` | Telegram update handlers (poll answers, new member welcome, `/admin` command) |
 | `scheduler.py` | Registers recurring jobs with dynamic schedule evaluation |
-| `send_now.py` | CLI tool to manually dispatch any poll or reminder on-demand |
 
 Leaderboard weights are configured in `practices.py`. The current weights are:
 
@@ -40,7 +39,7 @@ Practices without a configured weight retain the original weight of 1.
 
 ## Run locally
 
-1. Fill in `.env` with your Telegram bot token, group chat ID, HadithAPI key,
+1. Fill in `.env` with your Telegram bot token, HadithAPI key,
    and your Supabase URL/key (see the next section).
 2. Install dependencies:
 
@@ -56,8 +55,7 @@ python main.py
 
 When the bot starts, the built-in FastAPI web dashboard automatically starts on `http://localhost:8000` (or your configured `PORT`/`WEB_PORT`).
 
-- **Mobile Web Access**: Open `http://<your-server-ip>:8000` in any phone browser.
-- **PIN Protected**: Default PIN is `7860` (change via `ADMIN_PIN=...` in `.env`).
+- **Telegram Mini App**: Open the dashboard only from a one-time `/setup` link sent by the bot.
 - **Telegram Mini App**: Admins can type `/admin` or `/dashboard` in Telegram to receive a one-tap Mini App button (when `WEB_APP_URL` is set).
 - **Features**:
   - Live Dhaka clock and today's Aladhan prayer times carousel (Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha).
@@ -66,19 +64,6 @@ When the bot starts, the built-in FastAPI web dashboard automatically starts on 
   - Choose active days of the week (Daily, Mon & Thu for Sawm, Friday for Kahf, or custom).
   - Configure leaderboard marks/weights and custom poll answer options.
   - ⚡ **Send Now** button to test and dispatch any poll or report immediately to Telegram with toast confirmation.
-
-You can dispatch any poll or reminder immediately from your terminal without waiting for the scheduler:
-
-```bash
-# Send "Read 2 ayah of the Quran" poll
-python send_now.py quran
-
-# Send Tahajjud poll
-python send_now.py tahajjud
-
-# List all available actions
-python send_now.py --list
-```
 
 ## Database: Supabase (PostgreSQL)
 
@@ -97,7 +82,6 @@ The bot stores all check-in history, active polls, and streaks in a **Supabase**
 
 ```env
 BOT_TOKEN=your_telegram_bot_token
-GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
 SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
 SUPABASE_API_KEY=sb_secret_...your_service_role_key...
@@ -119,7 +103,7 @@ If you change `db.py` in a way that needs new tables or columns, edit `supabase_
 
 ## Run with Docker
 
-1. Make sure `.env` contains valid values for `BOT_TOKEN`, `GROUP_CHAT_ID`, `SUPABASE_URL`, and `SUPABASE_API_KEY`.
+1. Make sure `.env` contains valid values for `BOT_TOKEN`, `SUPABASE_URL`, and `SUPABASE_API_KEY`.
 2. Build and start the container:
 
 ```powershell
@@ -180,7 +164,6 @@ Create or edit `.env` on the VM so it contains your real values:
 
 ```env
 BOT_TOKEN=your_telegram_bot_token
-GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
 SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
 SUPABASE_API_KEY=sb_secret_...your_service_role_key...
@@ -219,7 +202,6 @@ Railway can run this bot from the included `Dockerfile`. Because the database is
 
 ```env
 BOT_TOKEN=your_telegram_bot_token
-GROUP_CHAT_ID=-1001234567890
 BD_TZ=Asia/Dhaka
 SUPABASE_URL=https://YOURPROJECT.supabase.co/rest/v1/
 SUPABASE_API_KEY=sb_secret_...your_service_role_key...

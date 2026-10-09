@@ -20,7 +20,7 @@ from typing import Optional
 
 from supabase import create_client, Client
 
-from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, GROUP_CHAT_ID, log
+from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, log
 
 
 # ============================================================
@@ -32,7 +32,7 @@ from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAI
 # real DB call will raise a clear error if creds are wrong.
 _client: Optional[Client] = None
 _current_group_id: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "telegram_group_id", default=GROUP_CHAT_ID
+    "telegram_group_id", default=0
 )
 
 
@@ -42,7 +42,10 @@ def set_current_group(group_chat_id: int):
 
 
 def current_group_id() -> int:
-    return int(_current_group_id.get() or GROUP_CHAT_ID)
+    group_id = int(_current_group_id.get())
+    if not group_id:
+        raise RuntimeError("No Telegram group context is active")
+    return group_id
 
 
 def _group_id(value: int | None = None) -> int:
@@ -80,15 +83,6 @@ def init_db():
     except Exception as exc:
         log.error("Supabase connectivity check failed: %s", exc)
         raise
-    if GROUP_CHAT_ID:
-        register_group(GROUP_CHAT_ID, "Legacy configured group")
-        try:
-            # Rows created by the single-group release used no tenant key.
-            for table in ("responses", "active_polls", "streaks", "poll_configs"):
-                _sb().table(table).update({"group_chat_id": GROUP_CHAT_ID}).eq("group_chat_id", 0).execute()
-        except Exception as exc:
-            log.warning("Legacy tenant backfill skipped: %s", exc)
-    seed_initial_poll_configs()
 
 
 def register_group(chat_id: int, title: str | None = None, username: str | None = None) -> dict:
@@ -104,8 +98,9 @@ def register_group(chat_id: int, title: str | None = None, username: str | None 
 def list_groups() -> list[dict]:
     try:
         return _sb().table("groups").select("*").eq("is_active", True).execute().data or []
-    except Exception:
-        return [{"chat_id": GROUP_CHAT_ID, "is_active": True}] if GROUP_CHAT_ID else []
+    except Exception as exc:
+        log.error("Could not list active groups: %s", exc)
+        raise
 
 
 def issue_setup_token(chat_id: int, user_id: int, ttl_minutes: int = 10) -> str:
@@ -527,43 +522,33 @@ def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
 
 def get_practice_info(practice_key: str) -> dict:
     conf = get_poll_config(practice_key)
-    if conf:
-        return {
-            "label": conf.get("title", practice_key),
-            "title": conf.get("title", practice_key),
-            "poll_options": _binary_options(conf.get("poll_options")),
-            "weight": conf.get("weight", 1),
-            "poll_type": conf.get("poll_type", "amal_poll"),
-        }
-    from practices import PRACTICES
-    p = PRACTICES.get(practice_key, {})
+    if not conf:
+        raise KeyError(f"Poll configuration '{practice_key}' does not exist for the active group")
     return {
-        "label": p.get("label", practice_key),
-        "title": p.get("label", practice_key),
-        "poll_options": p.get("poll_options", ["Alhamdulillah, done", "Incomplete/Missed"]),
-        "weight": get_practice_weight(practice_key),
-        "poll_type": "amal_poll",
+        "label": conf.get("title", practice_key),
+        "title": conf.get("title", practice_key),
+        "poll_options": _binary_options(conf.get("poll_options")),
+        "weight": conf.get("weight", 1),
+        "poll_type": conf.get("poll_type", "amal_poll"),
     }
 
 def get_practice_weight(practice_key: str) -> int:
     conf = get_poll_config(practice_key)
-    if conf and conf.get("weight") is not None:
-        return int(conf["weight"])
-    from practices import AMAL_WEIGHTS
-    return AMAL_WEIGHTS.get(practice_key, 1)
+    if not conf or conf.get("weight") is None:
+        raise KeyError(f"Poll configuration '{practice_key}' does not exist for the active group")
+    return int(conf["weight"])
 
 def get_scheduled_weekdays(practice_key: str) -> set[int]:
     conf = get_poll_config(practice_key)
-    if conf and conf.get("days_of_week") is not None:
-        return set(conf["days_of_week"])
-    from practices import SCHEDULED_WEEKDAYS
-    return SCHEDULED_WEEKDAYS.get(practice_key, {0, 1, 2, 3, 4, 5, 6})
+    if not conf or conf.get("days_of_week") is None:
+        return set()
+    return set(conf["days_of_week"])
 
 def get_weekly_max(practice_key: str) -> int:
     days = get_scheduled_weekdays(practice_key)
     if days:
         return len(days)
-    return WEEKLY_MAX.get(practice_key, 7)
+    return 0
 
 
 # ============================================================
@@ -612,9 +597,9 @@ def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optiona
 def get_poll_group(poll_id: str) -> int:
     try:
         row = (_sb().table("active_polls").select("group_chat_id").eq("poll_id", poll_id).limit(1).execute().data or [None])[0]
-        return int(row["group_chat_id"]) if row else GROUP_CHAT_ID
+        return int(row["group_chat_id"]) if row else 0
     except Exception:
-        return GROUP_CHAT_ID
+        return 0
 
 
 def delete_active_poll(poll_id: str, group_chat_id: int | None = None):

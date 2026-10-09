@@ -7,8 +7,6 @@ services:
     envVars:
       - key: BOT_TOKEN
         sync: false
-      - key: GROUP_CHAT_ID
-        sync: false
       - key: BD_TZ
         value: Asia/Dhaka
       - key: SUPABASE_URL
@@ -17,7 +15,5 @@ services:
         sync: false
       - key: HADITH_API_KEY
         sync: false
-      - key: ADMIN_PIN
-        value: "7860"
       - key: WEB_APP_URL
         sync: false

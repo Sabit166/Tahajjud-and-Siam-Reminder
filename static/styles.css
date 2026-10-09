@@ -1249,25 +1249,6 @@ input:checked + .slider:before {
   margin-bottom: 20px;
 }
 
-.pin-input-group {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.pin-input-group input {
-  flex: 1;
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: #ffffff;
-  font-size: 16px;
-  padding: 10px 14px;
-  text-align: center;
-  letter-spacing: 4px;
-  font-weight: 700;
-}
-
 .auth-error {
   font-size: 12px;
   color: var(--red-500);

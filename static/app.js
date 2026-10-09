@@ -25,8 +25,6 @@
 
   // --- DOM Elements ---
   const authOverlay = document.getElementById('auth-overlay');
-  const pinInput = document.getElementById('pin-input');
-  const pinSubmitBtn = document.getElementById('pin-submit-btn');
   const authError = document.getElementById('auth-error');
 
   const liveTimeEl = document.getElementById('live-time');
@@ -173,42 +171,6 @@
   function hideAuthScreen() {
     authOverlay.style.display = 'none';
   }
-
-  async function handlePinSubmit() {
-    const pin = pinInput.value.trim();
-    if (!pin) return;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        authToken = data.token;
-        localStorage.setItem('admin_token', authToken);
-        if (setupToken) {
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-        hideAuthScreen();
-        showToast('Admin access granted!', 'success');
-        initDashboard();
-      } else {
-        authError.style.display = 'block';
-        triggerHaptic('error');
-      }
-    } catch (err) {
-      authError.textContent = 'Server connection error';
-      authError.style.display = 'block';
-    }
-  }
-
-  pinSubmitBtn.addEventListener('click', handlePinSubmit);
-  pinInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handlePinSubmit();
-  });
 
   // --- Live Clock & Prayer Timings ---
   function updateLiveClock() {
@@ -958,8 +920,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pin: isTelegramWebApp ? null : authToken,
-          telegram_init_data: isTelegramWebApp ? window.Telegram.WebApp.initData : null,
+          telegram_init_data: window.Telegram.WebApp.initData,
           setup_token: setupToken,
         }),
       });
