@@ -438,6 +438,8 @@ def seed_initial_poll_configs():
         _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
         log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE))
     except Exception as exc:
+        _POLL_CONFIGS_CACHE = {}
+        _POLL_CONFIGS_CACHE_GROUP = group_id
         _SUPABASE_POLL_CONFIGS_AVAILABLE = False
         log.info(
             "Supabase table 'poll_configs' is unavailable; no poll configurations loaded: %s",
