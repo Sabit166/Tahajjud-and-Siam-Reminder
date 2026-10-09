@@ -14,10 +14,8 @@ Tables (created by supabase_schema.sql):
 from __future__ import annotations
 
 import datetime
-import json
 import secrets
 import contextvars
-from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
@@ -191,7 +189,6 @@ def get_session(token: str) -> dict | None:
 #  POLL CONFIGURATIONS (DYNAMIC SCHEDULES & PRACTICES)
 # ============================================================
 
-POLL_CONFIGS_FILE = Path(__file__).parent / "poll_configs.json"
 _POLL_CONFIGS_CACHE: dict[str, dict] = {}
 _POLL_CONFIGS_CACHE_GROUP: int | None = None
 _SUPABASE_POLL_CONFIGS_AVAILABLE: bool | None = None
@@ -427,34 +424,9 @@ def _binary_options(options: object) -> list[str]:
     values = [str(option).strip() for option in (options or []) if str(option).strip()]
     return values[:2] if len(values) >= 2 else list(DEFAULT_BINARY_OPTIONS)
 
-def _load_local_poll_configs() -> dict[str, dict]:
-    if POLL_CONFIGS_FILE.exists():
-        try:
-            with open(POLL_CONFIGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return {item["id"]: item for item in data if "id" in item}
-                elif isinstance(data, dict):
-                    return data
-        except Exception as exc:
-            log.warning("Could not read local poll_configs.json: %s", exc)
-
-    # Initialize from defaults
-    result = {item["id"]: dict(item) for item in DEFAULT_POLL_CONFIGS}
-    _save_local_poll_configs(result)
-    return result
-
-def _save_local_poll_configs(configs: dict[str, dict]):
-    try:
-        with open(POLL_CONFIGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(configs.values()), f, indent=2, ensure_ascii=False)
-    except Exception as exc:
-        log.warning("Could not write local poll_configs.json: %s", exc)
-
 def seed_initial_poll_configs():
     global _SUPABASE_POLL_CONFIGS_AVAILABLE, _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP
-    local_configs = _load_local_poll_configs()
-    _POLL_CONFIGS_CACHE = local_configs.copy()
+    _POLL_CONFIGS_CACHE = {}
     _POLL_CONFIGS_CACHE_GROUP = current_group_id()
 
     try:
@@ -463,20 +435,13 @@ def seed_initial_poll_configs():
 
         count_res = _sb().table("poll_configs").select("*").eq("group_chat_id", current_group_id()).execute()
         rows = count_res.data or []
-        if not rows:
-            log.info("Seeding initial %d poll configs to Supabase...", len(DEFAULT_POLL_CONFIGS))
-            for item in DEFAULT_POLL_CONFIGS:
-                _sb().table("poll_configs").upsert({**item, "group_chat_id": current_group_id()}, on_conflict="group_chat_id,id").execute()
-            _POLL_CONFIGS_CACHE = {item["id"]: dict(item) for item in DEFAULT_POLL_CONFIGS}
-        else:
-            _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
-            _save_local_poll_configs(_POLL_CONFIGS_CACHE)
+        _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
         log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE))
     except Exception as exc:
         _SUPABASE_POLL_CONFIGS_AVAILABLE = False
         log.info(
-            "Supabase table 'poll_configs' not yet migrated; using local poll_configs.json (%d items). Notice: run supabase_schema.sql to enable Supabase cloud table sync.",
-            len(_POLL_CONFIGS_CACHE),
+            "Supabase table 'poll_configs' is unavailable; no poll configurations loaded: %s",
+            exc,
         )
 
 def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = None) -> list[dict]:
@@ -487,16 +452,8 @@ def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = 
             res = _sb().table("poll_configs").select("*").eq("group_chat_id", group_id).order("created_at").execute()
             _POLL_CONFIGS_CACHE = {row["id"]: row for row in (res.data or [])}
             _POLL_CONFIGS_CACHE_GROUP = group_id
-            if _POLL_CONFIGS_CACHE:
-                _save_local_poll_configs(_POLL_CONFIGS_CACHE)
         except Exception as exc:
-            log.warning("Failed to refresh poll_configs from Supabase, using cache: %s", exc)
-
-    if _POLL_CONFIGS_CACHE_GROUP != group_id and not _SUPABASE_POLL_CONFIGS_AVAILABLE:
-        _POLL_CONFIGS_CACHE = _load_local_poll_configs()
-        _POLL_CONFIGS_CACHE_GROUP = group_id
-    elif not _SUPABASE_POLL_CONFIGS_AVAILABLE and not _POLL_CONFIGS_CACHE:
-        _POLL_CONFIGS_CACHE = _load_local_poll_configs()
+            log.warning("Failed to refresh poll_configs from Supabase: %s", exc)
 
     items = list(_POLL_CONFIGS_CACHE.values())
     for item in items:
@@ -544,8 +501,6 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
         clean_data["created_at"] = _POLL_CONFIGS_CACHE.get(poll_id, {}).get("created_at", now_iso)
 
     _POLL_CONFIGS_CACHE[poll_id] = clean_data
-    _save_local_poll_configs(_POLL_CONFIGS_CACHE)
-
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
             _sb().table("poll_configs").upsert(clean_data, on_conflict="group_chat_id,id").execute()
@@ -561,8 +516,6 @@ def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
         get_all_poll_configs(group_chat_id=group_id)
     existed = poll_id in _POLL_CONFIGS_CACHE
     _POLL_CONFIGS_CACHE.pop(poll_id, None)
-    _save_local_poll_configs(_POLL_CONFIGS_CACHE)
-
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
             _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()
