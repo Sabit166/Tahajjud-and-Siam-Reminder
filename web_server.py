@@ -221,6 +221,12 @@ def calculate_poll_time_for_today(conf: dict, timings_dict: dict[str, str]) -> t
 @app.post("/api/auth/verify")
 async def verify_auth(req: AuthRequest):
     """Exchange Mini App initData for a group-scoped session token."""
+    if req.setup_token and not req.telegram_init_data:
+        raise HTTPException(
+            status_code=401,
+            detail="This setup link must be opened from Telegram.",
+        )
+
     if req.telegram_init_data:
         user = validate_telegram_init_data(req.telegram_init_data)
         setup = consume_setup_token(req.setup_token, int(user["id"])) if req.setup_token else None
@@ -400,7 +406,7 @@ async def get_system_status(_=Depends(require_group)):
     polls = get_all_poll_configs()
     return {
         "bot_active": _bot_instance is not None,
-        "group_chat_id": GROUP_CHAT_ID,
+        "group_chat_id": int(_["chat_id"]),
         "dhaka_time": now.strftime("%Y-%m-%d %H:%M:%S"),
         "total_polls": len(polls),
         "active_polls": sum(1 for p in polls if p.get("is_active", True)),

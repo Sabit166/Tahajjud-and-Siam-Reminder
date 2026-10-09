@@ -189,6 +189,9 @@
         const data = await res.json();
         authToken = data.token;
         localStorage.setItem('admin_token', authToken);
+        if (setupToken) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
         hideAuthScreen();
         showToast('Admin access granted!', 'success');
         initDashboard();
@@ -945,6 +948,12 @@
   // Check initial authentication
   async function checkInitialAuth() {
     try {
+      if (setupToken && !isTelegramWebApp) {
+        authError.textContent = 'Open this setup link from Telegram.';
+        showAuthScreen();
+        return;
+      }
+
       const res = await fetch(`${API_BASE}/api/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -959,6 +968,9 @@
         const data = await res.json();
         authToken = data.token;
         localStorage.setItem('admin_token', authToken);
+        if (setupToken) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
         hideAuthScreen();
         initDashboard();
       } else {
