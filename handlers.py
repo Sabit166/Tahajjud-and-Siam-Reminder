@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from config import GROUP_CHAT_ID, BD_TZ, log
 from practices import AMAL_WEIGHTS, PRACTICES, GROUP_AMAL_LABELS
-from db import get_poll_practice, save_response, update_streak_for_response
+from db import get_poll_practice, save_response, update_streak_for_response, set_current_group, register_group, issue_setup_token
 from scheduling import schedule_message_delete
 
 # ============================================================
@@ -23,11 +23,14 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     user = answer.user
+    from db import get_poll_group
+    chat_id = get_poll_group(answer.poll_id)
+    set_current_group(chat_id)
     full_name = user.full_name or user.username or str(user.id)
     username = user.username or ""
     poll_id = answer.poll_id
 
-    practice_key = get_poll_practice(poll_id)
+    practice_key = get_poll_practice(poll_id, chat_id)
 
     if practice_key:
         from db import get_practice_info, get_practice_weight
@@ -53,7 +56,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply = f"InshaAllah next time --- {full_name} --- {label}"
 
         response_message = await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=chat_id,
             text=reply,
             parse_mode="Markdown",
         )
@@ -72,6 +75,16 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
     chat = update.effective_chat
     if not user or not chat:
         return
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ("administrator", "creator"):
+            await context.bot.send_message(chat.id, "Only Telegram group administrators can open the dashboard.")
+            return
+    except Exception:
+        await context.bot.send_message(chat.id, "I could not verify your administrator status.")
+        return
+    register_group(chat.id, chat.title, getattr(chat, "username", None))
+    token = issue_setup_token(chat.id, user.id)
 
     text = (
         "🌿 *Dhikr & Tahajjud Bot — Poll & Schedule Manager*\n\n"
@@ -85,7 +98,7 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
             [
                 InlineKeyboardButton(
                     "📱 Open Poll Dashboard",
-                    web_app=WebAppInfo(url=WEB_APP_URL),
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}?setup_token={token}"),
                 )
             ]
         ]
@@ -99,6 +112,22 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="Markdown",
         reply_markup=reply_markup,
     )
+
+
+async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    change = update.my_chat_member
+    if not change or not change.chat or change.chat.type not in ("group", "supergroup"):
+        return
+    new_status = getattr(change.new_chat_member, "status", "")
+    if new_status in ("member", "administrator"):
+        register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
+    elif new_status in ("left", "kicked"):
+        register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
+        from db import _sb
+        try:
+            _sb().table("groups").update({"is_active": False}).eq("chat_id", change.chat.id).execute()
+        except Exception:
+            pass
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message

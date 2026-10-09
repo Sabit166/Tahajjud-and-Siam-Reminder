@@ -12,7 +12,7 @@ from telegram import Bot
 
 from config import GROUP_CHAT_ID, RESPONSE_WINDOW_HOURS, BD_TZ, log
 from practices import AMAL_WEIGHTS, PRACTICES, NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
-from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX
+from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX, current_group_id
 from scheduling import schedule_poll_close
 from hadith import fetch_hadith, format_hadith_message
 from prayer_times import (
@@ -28,13 +28,16 @@ from prayer_times import (
 #  MESSAGE SENDERS & POLL CLOSING
 # ============================================================
 
+def _chat_id() -> int:
+    return current_group_id()
+
 async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     from db import get_practice_info
     p = get_practice_info(practice_key)
     question = p.get("label") or p.get("title", practice_key)
     options = p.get("poll_options") or ["Alhamdulillah, done", "Incomplete/Missed"]
     sent_message = await bot.send_poll(
-        chat_id=GROUP_CHAT_ID,
+        chat_id=_chat_id(),
         question=question,
         options=options,
         is_anonymous=False,
@@ -93,7 +96,7 @@ async def send_jumuah_reminder(bot: Bot):
     # but be safe and split if needed.
     if len(text) <= 4096:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text=text,
             parse_mode="Markdown",
         )
@@ -102,13 +105,13 @@ async def send_jumuah_reminder(bot: Bot):
         first = text[:4000]
         rest = text[4000:]
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text=first,
             parse_mode="Markdown",
         )
         if rest:
             await bot.send_message(
-                chat_id=GROUP_CHAT_ID,
+                chat_id=_chat_id(),
                 text=rest,
                 parse_mode="Markdown",
             )
@@ -180,7 +183,7 @@ async def send_weekly_report(bot: Bot):
     rows = get_weekly_summary()
     if not rows:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text="Weekly Report:\n\n━━━━━━━━━━\nNo responses recorded this week yet.",
         )
         return
@@ -245,7 +248,7 @@ async def send_weekly_report(bot: Bot):
     chunks = _chunk_blocks("Weekly Report", "━━━━━━━━━━\n", blocks)
     for chunk in chunks:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text=chunk,
         )
     log.info("Sent weekly report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
@@ -255,7 +258,7 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
 
     if not summary:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text="Daily Report:\n\n━━━━━━━━━━\nNo responses recorded today yet.",
         )
         return
@@ -301,7 +304,7 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
     chunks = _chunk_blocks("Daily Report", "━━━━━━━━━━\n", blocks)
     for chunk in chunks:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=_chat_id(),
             text=chunk,
         )
     log.info("Sent daily report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
@@ -319,7 +322,7 @@ async def send_prayer_hadith(bot: Bot, prayer_name: str):
         log.exception("Failed to fetch hadith for %s: %s", prayer_name, exc)
         return
     text = format_hadith_message(prayer_name, hadith)
-    await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+    await bot.send_message(chat_id=_chat_id(), text=text)
     log.info("Sent hadith for %s.", prayer_name)
 
 
@@ -335,13 +338,13 @@ async def send_prayer_hadith(bot: Bot, prayer_name: str):
 # dispatches one hadith reminder per prayer per day.
 
 _PRAYERS = ("fajr", "dhuhr", "asr", "maghrib", "isha")
-_DISPATCHED_TODAY: set[tuple[str, _dt.date]] = set()
-_SCHEDULED_EVENTS: set[tuple[str, _dt.date]] = set()
+_DISPATCHED_TODAY: set[tuple[int, str, _dt.date]] = set()
+_SCHEDULED_EVENTS: set[tuple[int, str, _dt.date]] = set()
 
 
 async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime):
     """Dispatch one event after it occurs, at most once for its local date."""
-    key = (event, event_at.date())
+    key = (current_group_id(), event, event_at.date())
     if key in _SCHEDULED_EVENTS:
         return
     now = _dt.datetime.now(BD_TZ)
@@ -438,7 +441,7 @@ async def _prayer_schedule_tick(context):
     # Keep only recent dates in memory while allowing late-started jobs to fire.
     cutoff = today - _dt.timedelta(days=2)
     _SCHEDULED_EVENTS.difference_update(
-        {key for key in _SCHEDULED_EVENTS if key[1] < cutoff}
+        {key for key in _SCHEDULED_EVENTS if key[2] < cutoff}
     )
 
 
@@ -453,7 +456,7 @@ async def _prayer_hadith_poll_tick(context):
     # again tomorrow.
     cutoff = today - _dt.timedelta(days=2)
     _DISPATCHED_TODAY.difference_update(
-        {key for key in _DISPATCHED_TODAY if key[1] < cutoff}
+        {key for key in _DISPATCHED_TODAY if key[2] < cutoff}
     )
 
     try:
@@ -466,7 +469,8 @@ async def _prayer_hadith_poll_tick(context):
         prayer_at = dt_with_tz(getattr(timings, prayer), base=today)
         delta = (now - prayer_at).total_seconds()
         # 0 <= delta < 300 means the prayer started within the last 5 min
-        if 0 <= delta < 300 and (prayer, today) not in _DISPATCHED_TODAY:
-            _DISPATCHED_TODAY.add((prayer, today))
+        key = (current_group_id(), prayer, today)
+        if 0 <= delta < 300 and key not in _DISPATCHED_TODAY:
+            _DISPATCHED_TODAY.add(key)
             log.info("Dispatching hadith reminder for %s at %s", prayer, now)
             await send_prayer_hadith(context.bot, prayer)

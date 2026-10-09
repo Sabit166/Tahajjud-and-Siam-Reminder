@@ -965,9 +965,9 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pin: authToken,
+          pin: isTelegramWebApp ? null : authToken,
           telegram_init_data: isTelegramWebApp ? window.Telegram.WebApp.initData : null,
-          telegram_user_id: isTelegramWebApp ? window.Telegram.WebApp.initDataUnsafe?.user?.id : null,
+          setup_token: new URLSearchParams(window.location.search).get('setup_token'),
         }),
       });
 

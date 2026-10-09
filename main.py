@@ -11,6 +11,7 @@ from telegram.ext import (
     MessageHandler,
     PollAnswerHandler,
     filters,
+    ChatMemberHandler,
 )
 
 import asyncio
@@ -18,7 +19,6 @@ import uvicorn
 
 from config import (
     TOKEN,
-    GROUP_CHAT_ID,
     SUPABASE_URL,
     SUPABASE_API_KEY,
     WEB_HOST,
@@ -26,7 +26,7 @@ from config import (
     log,
 )
 from db import init_db, cleanup_old_active_polls
-from handlers import handle_poll_answer, handle_new_member, handle_admin_command
+from handlers import handle_poll_answer, handle_new_member, handle_admin_command, handle_my_chat_member
 from scheduler import setup_scheduler
 from web_server import app as web_app, set_bot_instance
 
@@ -39,10 +39,6 @@ def main():
         print("\nERROR: BOT_TOKEN is missing in your environment or .env file!\n")
         return
 
-    if GROUP_CHAT_ID == 0:
-        print("\nERROR: GROUP_CHAT_ID is missing in your environment or .env file!\n")
-        return
-
     if not SUPABASE_URL or not SUPABASE_API_KEY:
         print("\nERROR: SUPABASE_URL or SUPABASE_API_KEY is missing in your .env file!\n")
         return
@@ -52,9 +48,10 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler(["admin", "dashboard", "polls"], handle_admin_command))
+    app.add_handler(CommandHandler(["admin", "setup", "dashboard", "polls"], handle_admin_command))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
+    app.add_handler(ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
 
     setup_scheduler(app)
 

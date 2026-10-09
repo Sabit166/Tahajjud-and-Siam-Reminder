@@ -10,6 +10,8 @@ import hashlib
 import hmac
 import json
 import logging
+import time
+import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
 
@@ -33,6 +35,8 @@ from db import (
     upsert_poll_config,
     delete_poll_config,
     get_practice_info,
+    get_session, issue_session, consume_setup_token, set_current_group,
+    register_group,
 )
 from prayer_times import fetch_prayer_times, dt_with_tz
 
@@ -86,31 +90,59 @@ class AuthRequest(BaseModel):
     pin: Optional[str] = None
     telegram_user_id: Optional[int] = None
     telegram_init_data: Optional[str] = None
+    setup_token: Optional[str] = None
 
 
-def verify_admin(authorization: Optional[str] = Header(None)) -> bool:
+def validate_telegram_init_data(init_data: str) -> dict:
+    values = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+    received_hash = values.pop("hash", "")
+    auth_date = int(values.get("auth_date", "0"))
+    if not received_hash or time.time() - auth_date > 86400:
+        raise HTTPException(401, "Expired or malformed Telegram initData")
+    from config import TOKEN
+    secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+    check = hmac.new(secret, "\n".join(f"{k}={values[k]}" for k in sorted(values)).encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(check, received_hash):
+        raise HTTPException(401, "Invalid Telegram initData signature")
+    user = json.loads(values.get("user", "{}"))
+    if not user.get("id"):
+        raise HTTPException(401, "Telegram user missing")
+    return user
+
+
+def require_group(authorization: Optional[str] = Header(None)) -> dict:
     """Simple authorization check using Bearer token (hashed or plain ADMIN_PIN)."""
+    token = (authorization or "").replace("Bearer ", "").strip()
+    session = get_session(token) if token else None
+    if session:
+        set_current_group(int(session["chat_id"]))
+        return session
     if not ADMIN_PIN:
-        return True  # If no PIN configured, allow access
-    if not authorization:
+        set_current_group(GROUP_CHAT_ID)
+        return {"chat_id": GROUP_CHAT_ID, "user_id": 0}
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header",
         )
 
-    token = authorization.replace("Bearer ", "").strip()
     expected_token = hashlib.sha256(ADMIN_PIN.encode("utf-8")).hexdigest()
     if token == ADMIN_PIN or token == expected_token:
-        return True
+        set_current_group(GROUP_CHAT_ID)
+        return {"chat_id": GROUP_CHAT_ID, "user_id": 0}
 
     # Check if token is authorized telegram user id
     if token.isdigit() and int(token) in ADMIN_USER_IDS:
-        return True
+        set_current_group(GROUP_CHAT_ID)
+        return {"chat_id": GROUP_CHAT_ID, "user_id": int(token)}
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid admin credentials",
+        detail="Invalid or expired group session",
     )
+
+
+verify_admin = require_group
 
 
 # ------------------------------------------------------------
@@ -188,16 +220,24 @@ def calculate_poll_time_for_today(conf: dict, timings_dict: dict[str, str]) -> t
 # ------------------------------------------------------------
 @app.post("/api/auth/verify")
 async def verify_auth(req: AuthRequest):
-    """Verify Admin PIN or Telegram authentication."""
+    """Exchange Mini App initData for a group-scoped session token."""
+    if req.telegram_init_data:
+        user = validate_telegram_init_data(req.telegram_init_data)
+        setup = consume_setup_token(req.setup_token, int(user["id"])) if req.setup_token else None
+        if not setup:
+            raise HTTPException(403, "Invalid, expired, or unauthorized setup token")
+        chat_id = int(setup["chat_id"])
+        register_group(chat_id)
+        return {"authenticated": True, "token": issue_session(chat_id, int(user["id"])), "group_chat_id": chat_id}
     if not ADMIN_PIN:
         return {"authenticated": True, "token": "open"}
 
     if req.pin and req.pin.strip() == ADMIN_PIN.strip():
         token = hashlib.sha256(ADMIN_PIN.encode("utf-8")).hexdigest()
-        return {"authenticated": True, "token": token}
+        return {"authenticated": True, "token": issue_session(GROUP_CHAT_ID, 0), "group_chat_id": GROUP_CHAT_ID}
 
     if req.telegram_user_id and req.telegram_user_id in ADMIN_USER_IDS:
-        return {"authenticated": True, "token": str(req.telegram_user_id)}
+        return {"authenticated": True, "token": issue_session(GROUP_CHAT_ID, req.telegram_user_id), "group_chat_id": GROUP_CHAT_ID}
 
     raise HTTPException(status_code=401, detail="Invalid PIN or unauthorized user.")
 
@@ -221,7 +261,7 @@ async def get_prayer_times_api():
 
 
 @app.get("/api/polls")
-async def list_polls():
+async def list_polls(_=Depends(require_group)):
     """List all configured polls and schedules with calculated times for today."""
     configs = get_all_poll_configs()
     now = _dt.datetime.now(BD_TZ)
@@ -350,7 +390,7 @@ async def trigger_poll_now(poll_id: str, _=Depends(verify_admin)):
 
 
 @app.get("/api/status")
-async def get_system_status():
+async def get_system_status(_=Depends(require_group)):
     """System health check and overview."""
     now = _dt.datetime.now(BD_TZ)
     polls = get_all_poll_configs()

@@ -26,9 +26,15 @@ async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def prayer_hadith_poll_job(context: ContextTypes.DEFAULT_TYPE):
     """Every-five-minute tick that dispatches hadith reminders."""
-    await _prayer_hadith_poll_tick(context)
+    from db import list_groups, set_current_group
+    for group in list_groups():
+        set_current_group(int(group["chat_id"]))
+        await _prayer_hadith_poll_tick(context)
 
 
 async def prayer_schedule_job(context: ContextTypes.DEFAULT_TYPE):
     """Dispatch prayer-relative practices and reports once per event."""
-    await _prayer_schedule_tick(context)
+    from db import list_groups, set_current_group
+    for group in list_groups():
+        set_current_group(int(group["chat_id"]))
+        await _prayer_schedule_tick(context)

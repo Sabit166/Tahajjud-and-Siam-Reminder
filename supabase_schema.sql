@@ -92,3 +92,50 @@ create trigger poll_configs_touch_updated_at
 
 -- Done. Tables are public.* and the service-role key bypasses RLS,
 -- so the bot can read/write without any extra policy work.
+
+-- ============================================================
+-- Multi-group tenancy migration (safe to run after the original schema)
+-- ============================================================
+create table if not exists public.groups (
+    chat_id bigint primary key,
+    title text,
+    username text,
+    is_active boolean not null default true,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+alter table public.responses add column if not exists group_chat_id bigint;
+alter table public.active_polls add column if not exists group_chat_id bigint;
+alter table public.streaks add column if not exists group_chat_id bigint;
+alter table public.poll_configs add column if not exists group_chat_id bigint;
+update public.responses set group_chat_id = coalesce(group_chat_id, 0);
+update public.active_polls set group_chat_id = coalesce(group_chat_id, 0);
+update public.streaks set group_chat_id = coalesce(group_chat_id, 0);
+update public.poll_configs set group_chat_id = coalesce(group_chat_id, 0);
+alter table public.responses alter column group_chat_id set not null;
+alter table public.active_polls alter column group_chat_id set not null;
+alter table public.streaks alter column group_chat_id set not null;
+alter table public.poll_configs alter column group_chat_id set not null;
+alter table public.responses drop constraint if exists responses_user_practice_date_unique;
+alter table public.responses add constraint responses_group_user_practice_date_unique
+    unique (group_chat_id, user_id, practice, response_date);
+alter table public.active_polls drop constraint if exists active_polls_pkey;
+alter table public.active_polls add constraint active_polls_group_pkey primary key (group_chat_id, poll_id);
+alter table public.streaks drop constraint if exists streaks_pkey;
+alter table public.streaks add constraint streaks_group_pkey primary key (group_chat_id, user_id, practice);
+alter table public.poll_configs drop constraint if exists poll_configs_pkey;
+alter table public.poll_configs add constraint poll_configs_group_pkey primary key (group_chat_id, id);
+create index if not exists responses_group_idx on public.responses(group_chat_id, response_date);
+create index if not exists active_polls_group_idx on public.active_polls(group_chat_id);
+create index if not exists streaks_group_idx on public.streaks(group_chat_id);
+create index if not exists poll_configs_group_idx on public.poll_configs(group_chat_id);
+create table if not exists public.setup_tokens (
+    token text primary key, chat_id bigint not null references public.groups(chat_id),
+    issued_by bigint not null, expires_at timestamptz not null, consumed_at timestamptz
+);
+create table if not exists public.web_sessions (
+    token text primary key, chat_id bigint not null references public.groups(chat_id),
+    user_id bigint not null, expires_at timestamptz not null
+);
+create index if not exists web_sessions_expiry_idx on public.web_sessions(expires_at);

@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import datetime
 import json
+import secrets
+import contextvars
 from pathlib import Path
 from typing import Optional
 
 from supabase import create_client, Client
 
-from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, log
+from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, GROUP_CHAT_ID, log
 
 
 # ============================================================
@@ -31,6 +33,22 @@ from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAI
 # missing (e.g. during `python -c "import db"` smoke tests). The first
 # real DB call will raise a clear error if creds are wrong.
 _client: Optional[Client] = None
+_current_group_id: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "telegram_group_id", default=GROUP_CHAT_ID
+)
+
+
+def set_current_group(group_chat_id: int):
+    """Set the tenant used by legacy helpers that do not receive a group id."""
+    return _current_group_id.set(int(group_chat_id))
+
+
+def current_group_id() -> int:
+    return int(_current_group_id.get() or GROUP_CHAT_ID)
+
+
+def _group_id(value: int | None = None) -> int:
+    return int(value if value is not None else current_group_id())
 
 
 def _sb() -> Client:
@@ -59,12 +77,96 @@ def init_db():
     """Verify connectivity and seed/load dynamic poll configurations."""
     try:
         # 1-row read forces a real round trip and surfaces auth errors.
-        _sb().table("responses").select("id").limit(1).execute()
+        _sb().table("groups").select("chat_id").limit(1).execute()
         log.info("Database (Supabase) ready.")
     except Exception as exc:
         log.error("Supabase connectivity check failed: %s", exc)
         raise
+    if GROUP_CHAT_ID:
+        register_group(GROUP_CHAT_ID, "Legacy configured group")
+        try:
+            # Rows created by the single-group release used no tenant key.
+            for table in ("responses", "active_polls", "streaks", "poll_configs"):
+                _sb().table(table).update({"group_chat_id": GROUP_CHAT_ID}).eq("group_chat_id", 0).execute()
+        except Exception as exc:
+            log.warning("Legacy tenant backfill skipped: %s", exc)
     seed_initial_poll_configs()
+
+
+def register_group(chat_id: int, title: str | None = None, username: str | None = None) -> dict:
+    """Register/update a Telegram group. The configured legacy group is seeded too."""
+    payload = {"chat_id": int(chat_id), "title": title, "username": username, "is_active": True}
+    try:
+        result = (_sb().table("groups").upsert(payload, on_conflict="chat_id").execute().data or [payload])[0]
+        configs = _sb().table("poll_configs").select("id").eq("group_chat_id", int(chat_id)).limit(1).execute()
+        if not configs.data:
+            for item in DEFAULT_POLL_CONFIGS:
+                _sb().table("poll_configs").upsert(
+                    {**item, "group_chat_id": int(chat_id)},
+                    on_conflict="group_chat_id,id",
+                ).execute()
+        return result
+    except Exception as exc:
+        log.warning("Could not register group %s: %s", chat_id, exc)
+        return payload
+
+
+def list_groups() -> list[dict]:
+    try:
+        return _sb().table("groups").select("*").eq("is_active", True).execute().data or []
+    except Exception:
+        return [{"chat_id": GROUP_CHAT_ID, "is_active": True}] if GROUP_CHAT_ID else []
+
+
+def issue_setup_token(chat_id: int, user_id: int, ttl_minutes: int = 10) -> str:
+    token = secrets.token_urlsafe(32)
+    payload = {
+        "token": token, "chat_id": int(chat_id), "issued_by": int(user_id),
+        "expires_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=ttl_minutes)).isoformat(),
+    }
+    _sb().table("setup_tokens").insert(payload).execute()
+    return token
+
+
+def consume_setup_token(token: str, user_id: int | None = None) -> dict | None:
+    try:
+        query = _sb().table("setup_tokens").select("*").eq("token", token).is_("consumed_at", "null")
+        if user_id is not None:
+            query = query.eq("issued_by", int(user_id))
+        result = query.limit(1).execute()
+        row = (result.data or [None])[0]
+        if not row or datetime.datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) <= datetime.datetime.now(datetime.timezone.utc):
+            return None
+        consume_query = (
+            _sb().table("setup_tokens")
+            .update({"consumed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+            .eq("token", token).is_("consumed_at", "null")
+        )
+        if user_id is not None:
+            consume_query = consume_query.eq("issued_by", int(user_id))
+        consumed = consume_query.select("*").execute()
+        return (consumed.data or [None])[0]
+    except Exception:
+        return None
+
+
+def issue_session(chat_id: int, user_id: int, ttl_minutes: int = 60) -> str:
+    token = secrets.token_urlsafe(32)
+    _sb().table("web_sessions").insert({
+        "token": token, "chat_id": int(chat_id), "user_id": int(user_id),
+        "expires_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=ttl_minutes)).isoformat(),
+    }).execute()
+    return token
+
+
+def get_session(token: str) -> dict | None:
+    try:
+        row = (_sb().table("web_sessions").select("*").eq("token", token).limit(1).execute().data or [None])[0]
+        if not row or datetime.datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) <= datetime.datetime.now(datetime.timezone.utc):
+            return None
+        return row
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -73,6 +175,7 @@ def init_db():
 
 POLL_CONFIGS_FILE = Path(__file__).parent / "poll_configs.json"
 _POLL_CONFIGS_CACHE: dict[str, dict] = {}
+_POLL_CONFIGS_CACHE_GROUP: int | None = None
 _SUPABASE_POLL_CONFIGS_AVAILABLE: bool | None = None
 
 DEFAULT_POLL_CONFIGS: list[dict] = [
@@ -324,20 +427,21 @@ def _save_local_poll_configs(configs: dict[str, dict]):
         log.warning("Could not write local poll_configs.json: %s", exc)
 
 def seed_initial_poll_configs():
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE, _POLL_CONFIGS_CACHE
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE, _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP
     local_configs = _load_local_poll_configs()
     _POLL_CONFIGS_CACHE = local_configs.copy()
+    _POLL_CONFIGS_CACHE_GROUP = current_group_id()
 
     try:
-        res = _sb().table("poll_configs").select("id").limit(1).execute()
+        res = _sb().table("poll_configs").select("id").eq("group_chat_id", current_group_id()).limit(1).execute()
         _SUPABASE_POLL_CONFIGS_AVAILABLE = True
 
-        count_res = _sb().table("poll_configs").select("*").execute()
+        count_res = _sb().table("poll_configs").select("*").eq("group_chat_id", current_group_id()).execute()
         rows = count_res.data or []
         if not rows:
             log.info("Seeding initial %d poll configs to Supabase...", len(DEFAULT_POLL_CONFIGS))
             for item in DEFAULT_POLL_CONFIGS:
-                _sb().table("poll_configs").upsert(item).execute()
+                _sb().table("poll_configs").upsert({**item, "group_chat_id": current_group_id()}, on_conflict="group_chat_id,id").execute()
             _POLL_CONFIGS_CACHE = {item["id"]: dict(item) for item in DEFAULT_POLL_CONFIGS}
         else:
             _POLL_CONFIGS_CACHE = {row["id"]: row for row in rows}
@@ -350,38 +454,47 @@ def seed_initial_poll_configs():
             len(_POLL_CONFIGS_CACHE),
         )
 
-def get_all_poll_configs(active_only: bool = False) -> list[dict]:
-    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = None) -> list[dict]:
+    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    group_id = _group_id(group_chat_id)
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
-            res = _sb().table("poll_configs").select("*").order("created_at").execute()
-            if res.data:
-                _POLL_CONFIGS_CACHE = {row["id"]: row for row in res.data}
+            res = _sb().table("poll_configs").select("*").eq("group_chat_id", group_id).order("created_at").execute()
+            _POLL_CONFIGS_CACHE = {row["id"]: row for row in (res.data or [])}
+            _POLL_CONFIGS_CACHE_GROUP = group_id
+            if _POLL_CONFIGS_CACHE:
                 _save_local_poll_configs(_POLL_CONFIGS_CACHE)
         except Exception as exc:
             log.warning("Failed to refresh poll_configs from Supabase, using cache: %s", exc)
 
-    if not _POLL_CONFIGS_CACHE:
+    if _POLL_CONFIGS_CACHE_GROUP != group_id or not _POLL_CONFIGS_CACHE:
         _POLL_CONFIGS_CACHE = _load_local_poll_configs()
+        _POLL_CONFIGS_CACHE_GROUP = group_id
 
     items = list(_POLL_CONFIGS_CACHE.values())
     if active_only:
         items = [i for i in items if i.get("is_active", True)]
     return items
 
-def get_poll_config(poll_id: str) -> Optional[dict]:
-    if not _POLL_CONFIGS_CACHE:
-        get_all_poll_configs()
+def get_poll_config(poll_id: str, group_chat_id: int | None = None) -> Optional[dict]:
+    group_id = _group_id(group_chat_id)
+    if _POLL_CONFIGS_CACHE_GROUP != group_id:
+        get_all_poll_configs(group_chat_id=group_id)
     return _POLL_CONFIGS_CACHE.get(poll_id)
 
-def upsert_poll_config(data: dict) -> dict:
-    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
+    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    group_id = _group_id(group_chat_id)
     poll_id = data.get("id")
     if not poll_id:
         raise ValueError("Poll configuration must have an 'id'")
 
+    if _POLL_CONFIGS_CACHE_GROUP != group_id:
+        _POLL_CONFIGS_CACHE = {}
+        _POLL_CONFIGS_CACHE_GROUP = group_id
     now_iso = datetime.datetime.now(BD_TZ).isoformat()
     clean_data = {
+        "group_chat_id": group_id,
         "id": poll_id,
         "title": str(data.get("title", "")),
         "poll_type": str(data.get("poll_type", "amal_poll")),
@@ -405,21 +518,24 @@ def upsert_poll_config(data: dict) -> dict:
 
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
-            _sb().table("poll_configs").upsert(clean_data).execute()
+            _sb().table("poll_configs").upsert(clean_data, on_conflict="group_chat_id,id").execute()
         except Exception as exc:
             log.warning("Could not persist poll_config %s to Supabase: %s", poll_id, exc)
 
     return clean_data
 
-def delete_poll_config(poll_id: str) -> bool:
-    global _POLL_CONFIGS_CACHE, _SUPABASE_POLL_CONFIGS_AVAILABLE
+def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
+    global _POLL_CONFIGS_CACHE, _POLL_CONFIGS_CACHE_GROUP, _SUPABASE_POLL_CONFIGS_AVAILABLE
+    group_id = _group_id(group_chat_id)
+    if _POLL_CONFIGS_CACHE_GROUP != group_id:
+        get_all_poll_configs(group_chat_id=group_id)
     existed = poll_id in _POLL_CONFIGS_CACHE
     _POLL_CONFIGS_CACHE.pop(poll_id, None)
     _save_local_poll_configs(_POLL_CONFIGS_CACHE)
 
     if _SUPABASE_POLL_CONFIGS_AVAILABLE:
         try:
-            _sb().table("poll_configs").delete().eq("id", poll_id).execute()
+            _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()
         except Exception as exc:
             log.warning("Could not delete poll_config %s from Supabase: %s", poll_id, exc)
     return existed
@@ -472,44 +588,54 @@ def get_weekly_max(practice_key: str) -> int:
 # In-process cache, mirrors the SQLite-era one. Writes go to Supabase
 # immediately; the cache is purely an optimization for the hot path
 # (poll answer -> lookup practice).
-_ACTIVE_POLL_CACHE: dict[str, str] = {}
+_ACTIVE_POLL_CACHE: dict[tuple[int, str], str] = {}
 
 
-def save_active_poll(poll_id: str, practice_key: str):
-    _ACTIVE_POLL_CACHE[poll_id] = practice_key
+def save_active_poll(poll_id: str, practice_key: str, group_chat_id: int | None = None):
+    group_id = _group_id(group_chat_id)
+    _ACTIVE_POLL_CACHE[(group_id, poll_id)] = practice_key
     try:
         _sb().table("active_polls").upsert(
-            {"poll_id": poll_id, "practice_key": practice_key}
+            {"poll_id": poll_id, "practice_key": practice_key, "group_chat_id": group_id}
         ).execute()
     except Exception as exc:
         log.warning("Could not save active poll %s: %s", poll_id, exc)
 
 
-def get_poll_practice(poll_id: str) -> Optional[str]:
-    if poll_id in _ACTIVE_POLL_CACHE:
-        return _ACTIVE_POLL_CACHE[poll_id]
+def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optional[str]:
+    if (_group_id(group_chat_id), poll_id) in _ACTIVE_POLL_CACHE:
+        return _ACTIVE_POLL_CACHE[(_group_id(group_chat_id), poll_id)]
     try:
         res = (
             _sb()
             .table("active_polls")
             .select("practice_key")
             .eq("poll_id", poll_id)
+            .eq("group_chat_id", _group_id(group_chat_id))
             .limit(1)
             .execute()
         )
         if res.data:
             key = res.data[0]["practice_key"]
-            _ACTIVE_POLL_CACHE[poll_id] = key
+            _ACTIVE_POLL_CACHE[(_group_id(group_chat_id), poll_id)] = key
             return key
     except Exception as exc:
         log.warning("Could not read active poll %s: %s", poll_id, exc)
     return None
 
 
-def delete_active_poll(poll_id: str):
-    _ACTIVE_POLL_CACHE.pop(poll_id, None)
+def get_poll_group(poll_id: str) -> int:
     try:
-        _sb().table("active_polls").delete().eq("poll_id", poll_id).execute()
+        row = (_sb().table("active_polls").select("group_chat_id").eq("poll_id", poll_id).limit(1).execute().data or [None])[0]
+        return int(row["group_chat_id"]) if row else GROUP_CHAT_ID
+    except Exception:
+        return GROUP_CHAT_ID
+
+
+def delete_active_poll(poll_id: str, group_chat_id: int | None = None):
+    _ACTIVE_POLL_CACHE.pop((_group_id(group_chat_id), poll_id), None)
+    try:
+        _sb().table("active_polls").delete().eq("poll_id", poll_id).eq("group_chat_id", _group_id(group_chat_id)).execute()
     except Exception as exc:
         log.warning("Could not delete active poll %s: %s", poll_id, exc)
 
@@ -543,6 +669,7 @@ def save_response(
     full_name: str,
     practice: str,
     did_it: int,
+    group_chat_id: int | None = None,
 ):
     """Upsert today's response for (user, practice). did_it is 0/1 for
     backward compatibility with the handler; we coerce to a real bool
@@ -551,6 +678,7 @@ def save_response(
     now = datetime.datetime.now(BD_TZ).isoformat()
 
     payload = {
+        "group_chat_id": _group_id(group_chat_id),
         "user_id": int(user_id),
         "username": username or "",
         "full_name": full_name,
@@ -563,7 +691,7 @@ def save_response(
     try:
         _sb().table("responses").upsert(
             payload,
-            on_conflict="user_id,practice,response_date",
+            on_conflict="group_chat_id,user_id,practice,response_date",
         ).execute()
         log.info(
             "Saved response: %s | %s | did_it=%s",
@@ -590,6 +718,7 @@ def get_weekly_summary():
             .select("user_id,full_name,practice,did_it,response_date")
             .gte("response_date", week_ago.isoformat())
             .lte("response_date", today.isoformat())
+            .eq("group_chat_id", _group_id())
             .execute()
         )
     except Exception as exc:
@@ -669,6 +798,7 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
             .gt("recorded_at", report_start.isoformat())
             .lte("recorded_at", report_end.isoformat())
             .in_("practice", scheduled_practices)
+            .eq("group_chat_id", _group_id())
             .execute()
         )
     except Exception as exc:
@@ -698,7 +828,7 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
 #  STREAKS
 # ============================================================
 
-def get_streak(user_id: int, practice: str) -> int:
+def get_streak(user_id: int, practice: str, group_chat_id: int | None = None) -> int:
     try:
         res = (
             _sb()
@@ -706,6 +836,7 @@ def get_streak(user_id: int, practice: str) -> int:
             .select("current_streak")
             .eq("user_id", user_id)
             .eq("practice", practice)
+            .eq("group_chat_id", _group_id(group_chat_id))
             .limit(1)
             .execute()
         )
@@ -716,13 +847,14 @@ def get_streak(user_id: int, practice: str) -> int:
     return 0
 
 
-def get_all_streaks(user_id: int) -> dict[str, int]:
+def get_all_streaks(user_id: int, group_chat_id: int | None = None) -> dict[str, int]:
     try:
         res = (
             _sb()
             .table("streaks")
             .select("practice,current_streak")
             .eq("user_id", user_id)
+            .eq("group_chat_id", _group_id(group_chat_id))
             .execute()
         )
         return {r["practice"]: int(r["current_streak"]) for r in (res.data or [])}
@@ -736,6 +868,7 @@ def update_streak_for_response(
     practice: str,
     scheduled_date: str,
     did_it: bool,
+    group_chat_id: int | None = None,
 ) -> int:
     """Update the streak for (user, practice) given today's outcome.
 
@@ -751,6 +884,7 @@ def update_streak_for_response(
             .select("current_streak,longest_streak,last_done_date")
             .eq("user_id", user_id)
             .eq("practice", practice)
+            .eq("group_chat_id", _group_id(group_chat_id))
             .limit(1)
             .execute()
         )
@@ -793,6 +927,7 @@ def update_streak_for_response(
             last_done = row["last_done_date"] if row else None
 
         payload = {
+            "group_chat_id": _group_id(group_chat_id),
             "user_id": int(user_id),
             "practice": practice,
             "current_streak": int(new_streak),
@@ -801,7 +936,7 @@ def update_streak_for_response(
             "last_scheduled_date": today,
         }
         _sb().table("streaks").upsert(
-            payload, on_conflict="user_id,practice"
+            payload, on_conflict="group_chat_id,user_id,practice"
         ).execute()
         return new_streak
     except Exception as exc:
@@ -840,6 +975,7 @@ def get_daily_streaks(
             .gt("recorded_at", report_start)
             .lte("recorded_at", report_end)
             .in_("practice", practices)
+            .eq("group_chat_id", _group_id())
             .execute()
         )
     except Exception as exc:
@@ -860,6 +996,7 @@ def get_daily_streaks(
                 .select("practice,current_streak")
                 .eq("user_id", uid)
                 .in_("practice", practices)
+                .eq("group_chat_id", _group_id())
                 .execute()
             )
         except Exception as exc:
