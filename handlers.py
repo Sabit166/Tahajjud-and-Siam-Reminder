@@ -5,7 +5,10 @@ group members.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import BD_TZ, log
@@ -110,7 +113,11 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(chat.id, "I could not determine my Telegram username. Please contact the bot administrator.")
         return
 
-    private_link = f"https://t.me/{bot.username}?start=setup_{token}"
+    bot_username = bot.username.lstrip("@").strip()
+    private_link = (
+        f"https://t.me/{quote(bot_username, safe='')}?"
+        f"start={quote(f'setup_{token}', safe='')}"
+    )
     reply_markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("💬 Open private chat with bot", url=private_link)
     ]])
@@ -119,12 +126,22 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         "Tap the button below, then press Start in the private chat."
     )
 
-    await context.bot.send_message(
-        chat_id=chat.id,
-        text=text,
-        parse_mode="Markdown",
-        reply_markup=reply_markup,
-    )
+    try:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+    except BadRequest as exc:
+        if "button_type_invalid" not in str(exc).lower():
+            raise
+        log.warning("Telegram rejected the setup URL button; sending a plain link instead.")
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=f"{text}\n\nOpen this setup link:\n{private_link}",
+            parse_mode="Markdown",
+        )
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
