@@ -168,11 +168,10 @@
   }
 
   // --- Authentication Flow ---
-  function showAuthScreen() {
+  function showAuthScreen(message) {
     authOverlay.style.display = 'flex';
-    pinInput.value = '';
-    authError.style.display = 'none';
-    setTimeout(() => pinInput.focus(), 200);
+    authError.textContent = message || '';
+    authError.style.display = message ? 'block' : 'none';
   }
 
   function hideAuthScreen() {
@@ -918,8 +917,7 @@
   async function checkInitialAuth() {
     try {
       if (setupToken && !isTelegramWebApp) {
-        authError.textContent = 'Open this setup link from Telegram.';
-        showAuthScreen();
+        showAuthScreen('Open this setup link from Telegram.');
         return;
       }
 
@@ -942,10 +940,11 @@
         hideAuthScreen();
         initDashboard();
       } else {
-        showAuthScreen();
+        const errData = await res.json().catch(() => ({}));
+        showAuthScreen(errData.detail || `Setup verification failed (status ${res.status}).`);
       }
     } catch (err) {
-      showAuthScreen();
+      showAuthScreen('Could not reach the server. Please try again.');
     }
   }
 

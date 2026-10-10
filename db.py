@@ -93,13 +93,23 @@ def _sb() -> Client:
 # ============================================================
 
 def init_db():
-    """Verify connectivity and seed/load dynamic poll configurations."""
+    """Verify connectivity and enable Supabase-backed poll configurations."""
+    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     try:
         # 1-row read forces a real round trip and surfaces auth errors.
         _sb().table("groups").select("chat_id").limit(1).execute()
         log.info("Database (Supabase) ready.")
     except Exception as exc:
         log.error("Supabase connectivity check failed: %s", exc)
+        raise
+    # Poll configs are per group and read on demand, but every read and
+    # write is gated on this flag, so it must be set before any job runs.
+    try:
+        _sb().table("poll_configs").select("id").limit(1).execute()
+        _SUPABASE_POLL_CONFIGS_AVAILABLE = True
+        log.info("Supabase poll_configs table available.")
+    except Exception as exc:
+        log.error("Supabase table 'poll_configs' is unavailable: %s", exc)
         raise
 
 
@@ -521,12 +531,14 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
     else:
         clean_data["created_at"] = cache.get(poll_id, {}).get("created_at", now_iso)
 
+    if not _SUPABASE_POLL_CONFIGS_AVAILABLE:
+        raise RuntimeError("Supabase poll_configs is not available; change was not saved")
+    try:
+        _sb().table("poll_configs").upsert(clean_data, on_conflict="group_chat_id,id").execute()
+    except Exception as exc:
+        log.error("Could not persist poll_config %s to Supabase: %s", poll_id, exc)
+        raise
     cache[poll_id] = clean_data
-    if _SUPABASE_POLL_CONFIGS_AVAILABLE:
-        try:
-            _sb().table("poll_configs").upsert(clean_data, on_conflict="group_chat_id,id").execute()
-        except Exception as exc:
-            log.warning("Could not persist poll_config %s to Supabase: %s", poll_id, exc)
 
     return clean_data
 
@@ -534,13 +546,15 @@ def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
     global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
     cache = _poll_cache_for_group(group_id)
-    existed = poll_id in cache
+    if not _SUPABASE_POLL_CONFIGS_AVAILABLE:
+        raise RuntimeError("Supabase poll_configs is not available; poll was not deleted")
+    try:
+        res = _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()
+    except Exception as exc:
+        log.error("Could not delete poll_config %s from Supabase: %s", poll_id, exc)
+        raise
+    existed = poll_id in cache or bool(res.data)
     cache.pop(poll_id, None)
-    if _SUPABASE_POLL_CONFIGS_AVAILABLE:
-        try:
-            _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()
-        except Exception as exc:
-            log.warning("Could not delete poll_config %s from Supabase: %s", poll_id, exc)
     return existed
 
 def get_practice_info(practice_key: str) -> dict:
@@ -778,26 +792,9 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
         if (report_end.weekday() in days) or (report_start.weekday() in days):
             scheduled_practices.append(c["id"])
 
-    # Fallback if no configs loaded yet
+    # A group with no amal polls has nothing to report on.
     if not scheduled_practices:
-        scheduled_practices = [
-            "evening_dhikr",
-            "salawat_on_rasulullah",
-            "nightly_al_mulk",
-            "nightly_as_sajdah",
-            "nightly_al_baqarah_last_2",
-            "nightly_33_tasbeeh",
-            "tahajjud",
-            "morning_dhikr",
-            "fazr_jamaat",
-            "ishraq_salat",
-            "quran",
-            "istighfar_100x",
-        ]
-        if report_start.weekday() == 3:
-            scheduled_practices.append("surah_kahf")
-        if report_end.weekday() in (0, 3):
-            scheduled_practices.append("sawm")
+        return ([], {}, report_start.isoformat(), report_end.isoformat())
 
     try:
         res = (

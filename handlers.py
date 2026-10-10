@@ -35,11 +35,14 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user = answer.user
     from db import get_poll_group
-    chat_id = get_poll_group(answer.poll_id)
-    set_current_group(chat_id)
     full_name = user.full_name or user.username or str(user.id)
     username = user.username or ""
     poll_id = answer.poll_id
+    chat_id = get_poll_group(poll_id)
+    if not chat_id:
+        log.info(f"Received poll answer from {full_name} for untracked poll ID {poll_id}")
+        return
+    set_current_group(chat_id)
 
     practice_key = get_poll_practice(poll_id, chat_id)
 
@@ -198,6 +201,20 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
             _sb().table("groups").update({"is_active": False}).eq("chat_id", change.chat.id).execute()
         except Exception:
             pass
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log handler/job failures with enough context to trace them."""
+    where = "job" if context.job else "update"
+    detail = ""
+    if isinstance(update, Update):
+        if update.poll_answer:
+            detail = f" poll_id={update.poll_answer.poll_id}"
+        elif update.effective_chat:
+            detail = f" chat_id={update.effective_chat.id}"
+    elif context.job:
+        detail = f" job={context.job.name}"
+    log.error("Unhandled error in %s%s", where, detail, exc_info=context.error)
+
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message

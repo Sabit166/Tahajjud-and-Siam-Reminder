@@ -10,6 +10,8 @@ from typing import cast
 
 from telegram.ext import ContextTypes
 
+from config import log
+
 from messaging import (
     send_checkin,
     _prayer_schedule_tick,
@@ -29,7 +31,11 @@ async def prayer_hadith_poll_job(context: ContextTypes.DEFAULT_TYPE):
     from db import list_groups, set_current_group
     for group in list_groups():
         set_current_group(int(group["chat_id"]))
-        await _prayer_hadith_poll_tick(context)
+        try:
+            await _prayer_hadith_poll_tick(context)
+        except Exception:
+            # One group's failure must not stop the other groups' reminders.
+            log.exception("Hadith tick failed for group %s", group["chat_id"])
 
 
 async def prayer_schedule_job(context: ContextTypes.DEFAULT_TYPE):
@@ -37,4 +43,8 @@ async def prayer_schedule_job(context: ContextTypes.DEFAULT_TYPE):
     from db import list_groups, set_current_group
     for group in list_groups():
         set_current_group(int(group["chat_id"]))
-        await _prayer_schedule_tick(context)
+        try:
+            await _prayer_schedule_tick(context)
+        except Exception:
+            # One group's failure must not stop the other groups' polls.
+            log.exception("Schedule tick failed for group %s", group["chat_id"])

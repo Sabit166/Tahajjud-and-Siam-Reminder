@@ -411,30 +411,8 @@ async def _prayer_schedule_tick(context):
             except Exception as exc:
                 log.warning("Error calculating prayer time for %s: %s", cid, exc)
 
-    # Fallback to hardcoded events if configs are empty
-    if not events:
-        sunrise = at("sunrise")
-        maghrib = at("maghrib")
-        events = [
-            ("morning_dhikr", sunrise),
-            ("fazr_jamaat", sunrise),
-            ("ishraq_salat", sunrise),
-            ("salawat_on_rasulullah", maghrib + _dt.timedelta(minutes=30)),
-            ("evening_dhikr", maghrib + _dt.timedelta(minutes=30)),
-            ("nightly_amal", at("isha", _dt.timedelta(minutes=30))),
-            ("tahajjud", at("fajr", _dt.timedelta(minutes=-30))),
-            ("daily_report", maghrib + _dt.timedelta(minutes=2)),
-        ]
-        if today.weekday() in (0, 3):
-            events.append(("sawm", at("fajr", _dt.timedelta(minutes=-30))))
-        if today.weekday() == 4:
-            events.extend([
-                ("surah_kahf", at("dhuhr")),
-                ("weekly_report", maghrib + _dt.timedelta(minutes=5)),
-            ])
-        if today.weekday() == 3:
-            events.append(("jumuah_reminder", maghrib + _dt.timedelta(minutes=10)))
-
+    # Only the group's own configs are scheduled; a group without any
+    # configs (e.g. freshly set up) receives nothing until it adds some.
     for event, event_at in events:
         await _dispatch_scheduled_event(context, event, event_at)
 

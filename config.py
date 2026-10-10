@@ -52,3 +52,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 log = logging.getLogger(__name__)
+# httpx logs every request URL at INFO; Telegram URLs embed the bot token
+# and HadithAPI URLs embed the API key, so keep those out of the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)

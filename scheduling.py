@@ -12,7 +12,7 @@ from typing import Any, cast
 from telegram.ext import ContextTypes
 
 from config import RESPONSE_WINDOW_HOURS, RESPONSE_DELETE_AFTER_SECONDS, log
-from db import delete_active_poll, current_group_id
+from db import delete_active_poll
 
 # ============================================================
 #  JOB CALLBACKS
@@ -43,7 +43,7 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
             message_id=message["message_id"],
         )
         if stopped and stopped.id:
-            delete_active_poll(stopped.id, current_group_id())
+            delete_active_poll(stopped.id, int(message["chat_id"]))
         log.info(f"Closed poll: {message.get('label', 'unknown')}")
     except Exception as exc:
         log.warning(f"Could not close poll {message.get('label', 'unknown')}: {exc}")

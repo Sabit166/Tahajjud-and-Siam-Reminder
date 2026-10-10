@@ -32,6 +32,7 @@ from handlers import (
     handle_admin_command,
     handle_start,
     handle_my_chat_member,
+    handle_error,
 )
 from scheduler import setup_scheduler
 from web_server import app as web_app, set_bot_instance
@@ -59,6 +60,7 @@ def main():
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
     app.add_handler(ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_error_handler(handle_error)
 
     setup_scheduler(app)
 

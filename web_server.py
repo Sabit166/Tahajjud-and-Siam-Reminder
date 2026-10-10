@@ -6,6 +6,7 @@ for managing Dhikr & Tahajjud Bot polls, schedules, and prayer-time triggers.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import hmac
 import json
 import logging
@@ -101,8 +102,12 @@ def validate_telegram_init_data(init_data: str) -> dict:
     return user
 
 
-def require_group(authorization: Optional[str] = Header(None)) -> dict:
-    """Simple authorization check using Bearer token (hashed or plain ADMIN_PIN)."""
+async def require_group(authorization: Optional[str] = Header(None)) -> dict:
+    """Resolve the Bearer session token to its group and activate that group.
+
+    Must stay async: FastAPI runs sync dependencies in a worker thread,
+    and the group context set there would not reach the endpoint.
+    """
     token = (authorization or "").replace("Bearer ", "").strip()
     session = get_session(token) if token else None
     if session:
