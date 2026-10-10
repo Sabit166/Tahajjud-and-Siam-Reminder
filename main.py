@@ -38,6 +38,23 @@ from scheduler import setup_scheduler
 from web_server import app as web_app, set_bot_instance
 
 # ============================================================
+#  TELEGRAM COMMAND MENU
+# ============================================================
+
+async def register_bot_commands(bot):
+    """Show /setup in the '/' menu for group administrators only, since
+    handle_admin_command rejects everyone else."""
+    from telegram import BotCommand, BotCommandScopeAllChatAdministrators
+    try:
+        await bot.set_my_commands(
+            [BotCommand("setup", "Open this group's poll & reminder dashboard")],
+            scope=BotCommandScopeAllChatAdministrators(),
+        )
+        log.info("Registered /setup in the command menu for group administrators.")
+    except Exception as exc:
+        log.warning("Could not register bot commands: %s", exc)
+
+# ============================================================
 #  MAIN ENTRYPOINT
 # ============================================================
 
@@ -67,6 +84,7 @@ def main():
     async def _post_init(ctx):
         set_bot_instance(app.bot, app.job_queue)
         cleanup_old_active_polls(24)
+        await register_bot_commands(app.bot)
 
         # Start FastAPI Web Server concurrently in the same asyncio event loop
         server_config = uvicorn.Config(
