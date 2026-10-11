@@ -31,6 +31,8 @@ class _Query:
         self.payload = None
         self.on_conflict = None
         self.limit_n = None
+        self.range_start = 0
+        self.range_end = None
 
     # --- builders ---
     def select(self, *_a, **_k):
@@ -73,6 +75,10 @@ class _Query:
         self.limit_n = n
         return self
 
+    def range(self, start, end):
+        self.range_start, self.range_end = start, end
+        return self
+
     def insert(self, payload):
         self.op, self.payload = "insert", payload
         return self
@@ -99,8 +105,14 @@ class _Query:
             raise RuntimeError(f"simulated failure on {self.table}.{self.op}")
         rows = self.store.tables.setdefault(self.table, [])
         if self.op == "select":
+            self.store.selects.append(self.table)
             out = [dict(r) for r in rows if self._match(r)]
-            return SimpleNamespace(data=out[: self.limit_n] if self.limit_n else out)
+            stop = None if self.range_end is None else self.range_end + 1
+            out = out[self.range_start:stop]
+            if self.limit_n:
+                out = out[: self.limit_n]
+            # Like PostgREST's max-rows: extra rows are silently dropped.
+            return SimpleNamespace(data=out[: self.store.max_rows])
         if self.op == "insert":
             rows.append(dict(self.payload))
             return SimpleNamespace(data=[dict(self.payload)])
@@ -135,6 +147,8 @@ class FakeSupabase:
     def __init__(self):
         self.tables: dict[str, list[dict]] = {}
         self.fail_tables: dict[str, str] = {}
+        self.max_rows = 1000          # Supabase's default per-request cap
+        self.selects: list[str] = []  # table name of every SELECT issued
 
     def table(self, name):
         return _Query(self, name)

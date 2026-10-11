@@ -311,15 +311,28 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
         log.info("Dispatched scheduled event %s at %s.", event, event_at)
 
 
-async def _prayer_schedule_tick(context):
+async def fetch_today_timings():
+    """Fetch today's (Dhaka) prayer times once for a whole job run.
+
+    Every group uses the same city, so the per-minute and per-5-minute
+    jobs fetch once and hand the result to each group's tick. Returns
+    None on failure; the job simply retries on its next run.
+    """
+    try:
+        return await fetch_prayer_times(date=_dt.datetime.now(BD_TZ).date())
+    except Exception as exc:
+        log.warning("Prayer-time fetch failed; will retry next run: %s", exc)
+        return None
+
+
+async def _prayer_schedule_tick(context, timings=None):
     """Dispatch the group's amal polls and the built-in daily/weekly reports."""
     now = _dt.datetime.now(BD_TZ)
     today = now.date()
-    try:
-        timings = await fetch_prayer_times(date=today)
-    except Exception as exc:
-        log.warning("Prayer-time schedule fetch failed; will retry next tick: %s", exc)
-        return
+    if timings is None:
+        timings = await fetch_today_timings()
+        if timings is None:
+            return
 
     def at(name: str, offset: _dt.timedelta = _dt.timedelta()) -> _dt.datetime:
         return dt_with_tz(getattr(timings, name.lower()), base=today) + offset
@@ -372,10 +385,8 @@ async def _prayer_schedule_tick(context):
     )
 
 
-async def _prayer_hadith_poll_tick(context):
+async def _prayer_hadith_poll_tick(context, timings=None):
     """Runs every 5 minutes; dispatches hadith reminders at prayer times."""
-    from prayer_times import fetch_prayer_times, dt_with_tz
-
     now = _dt.datetime.now(BD_TZ)
     today = now.date()
 
@@ -386,11 +397,10 @@ async def _prayer_hadith_poll_tick(context):
         {key for key in _DISPATCHED_TODAY if key[2] < cutoff}
     )
 
-    try:
-        timings = await fetch_prayer_times()
-    except Exception as exc:
-        log.warning("Prayer-time fetch failed; will retry next tick: %s", exc)
-        return
+    if timings is None:
+        timings = await fetch_today_timings()
+        if timings is None:
+            return
 
     for prayer in _PRAYERS:
         prayer_at = dt_with_tz(getattr(timings, prayer), base=today)

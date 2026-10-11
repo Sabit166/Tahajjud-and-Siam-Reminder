@@ -692,25 +692,44 @@ def save_response(
         raise
 
 
+_PAGE_SIZE = 1000
+
+
+def _select_all(build_query) -> list[dict]:
+    """Fetch every row of a query page by page.
+
+    PostgREST caps each response (Supabase default: 1000 rows) and drops
+    the rest silently, so report queries must paginate. ``build_query``
+    returns a fresh, deterministically ordered query on each call. Reads
+    until an empty page so a server cap below _PAGE_SIZE is also safe.
+    """
+    rows: list[dict] = []
+    while True:
+        page = build_query().range(len(rows), len(rows) + _PAGE_SIZE - 1).execute().data or []
+        if not page:
+            return rows
+        rows.extend(page)
+
+
 def get_weekly_summary():
     """Return [(full_name, practice, completed, total), ...] for the
     last 7 days (inclusive of today)."""
     today = datetime.datetime.now(BD_TZ).date()
     week_ago = today - datetime.timedelta(days=6)
+    group_id = _group_id()
 
     try:
-        # PostgREST doesn't have SUM/COUNT over PostgREST directly,
-        # but we can fetch the rows for the window and aggregate in
-        # Python. Volume is small (active group), so this is fine.
-        res = (
+        # PostgREST has no SUM/COUNT here, so fetch the window's rows and
+        # aggregate in Python.
+        rows = _select_all(lambda: (
             _sb()
             .table("responses")
             .select("user_id,full_name,practice,did_it,response_date")
             .gte("response_date", week_ago.isoformat())
             .lte("response_date", today.isoformat())
-            .eq("group_chat_id", _group_id())
-            .execute()
-        )
+            .eq("group_chat_id", group_id)
+            .order("id")
+        ))
     except Exception as exc:
         log.error("Could not load weekly summary: %s", exc)
         return []
@@ -718,7 +737,7 @@ def get_weekly_summary():
     # Aggregate: (user_id, practice) -> (done_days, total_days)
     agg: dict[tuple[int, str], tuple[int, int]] = {}
     name_by_user: dict[int, str] = {}
-    for row in res.data or []:
+    for row in rows:
         key = (row["user_id"], row["practice"])
         done, total = agg.get(key, (0, 0))
         if row["did_it"]:
@@ -763,17 +782,18 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
     if not scheduled_practices:
         return ([], {}, report_start.isoformat(), report_end.isoformat())
 
+    group_id = _group_id()
     try:
-        res = (
+        rows = _select_all(lambda: (
             _sb()
             .table("responses")
             .select("full_name,practice,did_it")
             .gt("recorded_at", report_start.isoformat())
             .lte("recorded_at", report_end.isoformat())
             .in_("practice", scheduled_practices)
-            .eq("group_chat_id", _group_id())
-            .execute()
-        )
+            .eq("group_chat_id", group_id)
+            .order("id")
+        ))
     except Exception as exc:
         log.error("Could not load daily summary: %s", exc)
         return (
@@ -784,7 +804,7 @@ def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list
         )
 
     summary: dict[str, dict[str, int]] = {}
-    for row in res.data or []:
+    for row in rows:
         summary.setdefault(row["full_name"], {})[row["practice"]] = (
             1 if row["did_it"] else 0
         )
@@ -939,47 +959,52 @@ def get_daily_streaks(
 
     Users/practices with no row in `streaks` are simply absent.
     """
+    group_id = _group_id()
     try:
-        # Distinct (user_id, full_name) pairs that responded in the window.
-        user_rows = (
+        # (user_id, full_name) pairs that responded in the window.
+        user_rows = _select_all(lambda: (
             _sb()
             .table("responses")
             .select("user_id,full_name")
             .gt("recorded_at", report_start)
             .lte("recorded_at", report_end)
             .in_("practice", practices)
-            .eq("group_chat_id", _group_id())
-            .execute()
-        )
+            .eq("group_chat_id", group_id)
+            .order("id")
+        ))
     except Exception as exc:
         log.error("Could not load daily streaks: %s", exc)
         return {}
 
     # De-dup (one user_id may appear on multiple practices)
     seen: dict[int, str] = {}
-    for r in user_rows.data or []:
+    for r in user_rows:
         seen.setdefault(r["user_id"], r["full_name"])
+    if not seen:
+        return {}
+
+    # One query for all members instead of one per member.
+    try:
+        streak_rows = _select_all(lambda: (
+            _sb()
+            .table("streaks")
+            .select("user_id,practice,current_streak")
+            .in_("user_id", list(seen))
+            .in_("practice", practices)
+            .eq("group_chat_id", group_id)
+            .order("user_id")
+            .order("practice")
+        ))
+    except Exception as exc:
+        log.warning("Could not load streaks: %s", exc)
+        return {}
 
     result: dict[str, dict[str, int]] = {}
-    for uid, full_name in seen.items():
-        try:
-            res = (
-                _sb()
-                .table("streaks")
-                .select("practice,current_streak")
-                .eq("user_id", uid)
-                .in_("practice", practices)
-                .eq("group_chat_id", _group_id())
-                .execute()
-            )
-        except Exception as exc:
-            log.warning("Could not load streaks for user %s: %s", uid, exc)
-            continue
-        merged = result.setdefault(full_name, {})
-        for r in res.data or []:
-            merged[r["practice"]] = max(
-                merged.get(r["practice"], 0), int(r["current_streak"])
-            )
+    for r in streak_rows:
+        merged = result.setdefault(seen[r["user_id"]], {})
+        merged[r["practice"]] = max(
+            merged.get(r["practice"], 0), int(r["current_streak"])
+        )
     return result
 
 
