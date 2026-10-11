@@ -83,6 +83,10 @@ def main():
 
     async def _post_init(ctx):
         set_bot_instance(app.bot, app.job_queue)
+        # Close polls whose amal day ended while the bot was down and re-arm
+        # the rest; must run before the cleanup removes their records.
+        from messaging import restore_poll_closings
+        await restore_poll_closings(app.bot, app.job_queue)
         # Polls stay open up to ~24h (until their amal day ends); keep a margin.
         cleanup_old_active_polls(48)
         await register_bot_commands(app.bot)

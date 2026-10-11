@@ -125,7 +125,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 | Dashboard shows *"Open this setup link from Telegram."* | You opened the link outside Telegram. Use the button in the bot chat. |
 | The group gets no polls | Check the dashboard: does the group have active polls scheduled for today's weekday? A new group starts with none. |
 | A report says no responses were recorded | The group has no amal polls yet, or nobody answered in that period. |
-| Answers aren't being counted | Polls close at Maghrib + 2 minutes, when the daily report is sent, and later answers aren't recorded. After a bot restart, a poll can still look open in Telegram past that time, but votes on it are ignored. If it continues, the operator should check the logs (see below). |
+| Answers aren't being counted | Polls close at Maghrib + 2 minutes, when the daily report is sent, and later answers aren't recorded. If it continues, the operator should check the logs (see below). |
 
 ---
 
@@ -164,7 +164,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 |---|---|---|
 | `groups` | Every group the bot is in | `chat_id` |
 | `poll_configs` | Each group's amal polls. Older report/reminder rows may remain; the bot ignores them. | `(group_chat_id, id)` |
-| `active_polls` | Telegram poll ID → poll config, for matching answers to polls | `(group_chat_id, poll_id)` |
+| `active_polls` | Telegram poll ID → poll config, send time, and message ID, for matching answers and closing polls | `(group_chat_id, poll_id)` |
 | `responses` | One answer per member, amal, and day | unique `(group_chat_id, user_id, practice, response_date)` |
 | `streaks` | Current and longest streak per member and amal | `(group_chat_id, user_id, practice)` |
 | `setup_tokens` | One-time `/setup` links (10 min) | `token` |
@@ -250,6 +250,8 @@ Supabase poll_configs table available.
 Registered /setup in the command menu for group administrators.
 Bot is running!
 ```
+
+`Poll closing restored: N closed (overdue), N scheduled, ...` shows the bot re-arming poll closing after the restart.
 
 A single `Conflict: terminated by other getUpdates request` right after a deploy is normal: the old container is still shutting down. It should not repeat.
 

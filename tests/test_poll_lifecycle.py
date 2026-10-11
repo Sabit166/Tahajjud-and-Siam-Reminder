@@ -61,7 +61,7 @@ def test_send_checkin_maps_telegram_poll_id_to_config_and_group(fake_sb, bot):
     run(go())
     assert bot.sent_polls == [{"chat_id": GROUP_A, "question": "Tahajjud Salat", "options": ["Done", "Missed"]}]
     assert fake_sb.rows("active_polls") == [
-        {"poll_id": "tg-poll-1001", "practice_key": "tahajjud", "group_chat_id": GROUP_A}
+        {"poll_id": "tg-poll-1001", "practice_key": "tahajjud", "group_chat_id": GROUP_A, "message_id": 2}
     ]
 
 

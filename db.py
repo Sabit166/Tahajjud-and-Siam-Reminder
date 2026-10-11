@@ -565,31 +565,44 @@ def get_weekly_max(practice_key: str) -> int:
 _ACTIVE_POLL_CACHE: dict[tuple[int, str], str] = {}
 
 
-def save_active_poll(poll_id: str, practice_key: str, group_chat_id: int | None = None):
+def save_active_poll(
+    poll_id: str,
+    practice_key: str,
+    group_chat_id: int | None = None,
+    message_id: int | None = None,
+):
+    """Record a sent poll. message_id lets the bot close it after a restart."""
     group_id = _group_id(group_chat_id)
     _ACTIVE_POLL_CACHE[(group_id, poll_id)] = practice_key
+    payload = {"poll_id": poll_id, "practice_key": practice_key, "group_chat_id": group_id}
+    if message_id is not None:
+        payload["message_id"] = int(message_id)
     try:
-        _sb().table("active_polls").upsert(
-            {
-                "poll_id": poll_id,
-                "practice_key": practice_key,
-                "group_chat_id": group_id,
-            },
-            on_conflict="group_chat_id,poll_id",
-        ).execute()
-        log.info(
-            "Registered active poll %s for group %s (%s).",
-            poll_id,
-            group_id,
-            practice_key,
-        )
+        try:
+            _sb().table("active_polls").upsert(payload, on_conflict="group_chat_id,poll_id").execute()
+        except Exception as exc:
+            if "message_id" not in payload or "message_id" not in str(exc):
+                raise
+            # Column not migrated yet: still track the poll so answers count.
+            log.warning("active_polls.message_id is missing; run the migration in supabase_schema.sql.")
+            payload.pop("message_id")
+            _sb().table("active_polls").upsert(payload, on_conflict="group_chat_id,poll_id").execute()
+        log.info("Registered active poll %s for group %s (%s).", poll_id, group_id, practice_key)
     except Exception as exc:
-        log.error(
-            "Could not save active poll %s for group %s: %s",
-            poll_id,
-            group_id,
-            exc,
-        )
+        log.error("Could not save active poll %s for group %s: %s", poll_id, group_id, exc)
+
+
+def list_active_polls() -> list[dict]:
+    """All tracked polls with their send time and Telegram message id."""
+    try:
+        return _select_all(lambda: (
+            _sb().table("active_polls")
+            .select("poll_id,practice_key,group_chat_id,created_at,message_id")
+            .order("group_chat_id").order("poll_id")
+        ))
+    except Exception as exc:
+        log.warning("Could not list active polls (is active_polls.message_id migrated?): %s", exc)
+        return []
 
 
 def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optional[str]:

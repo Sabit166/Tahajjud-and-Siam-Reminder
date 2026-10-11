@@ -84,6 +84,53 @@ async def amal_day_end(day: _dt.date) -> _dt.datetime:
     return await maghrib_at(day) + DAY_END_GRACE
 
 
+async def poll_close_time(sent_at: _dt.datetime) -> _dt.datetime:
+    """A poll closes when the amal day it was sent in ends."""
+    return await amal_day_end(await amal_day_of(sent_at))
+
+
+async def restore_poll_closings(bot: Bot, job_queue) -> None:
+    """Re-arm poll closing after a restart (close jobs live only in memory).
+
+    Polls whose amal day has already ended are closed now; the rest get a
+    close job at their day's end. Polls recorded before message ids were
+    stored cannot be closed in Telegram, but late answers to them are
+    still ignored by the answer handler.
+    """
+    from db import list_active_polls, delete_active_poll
+    from handlers import _parse_ts
+    from scheduling import close_poll_job
+
+    now = _dt.datetime.now(BD_TZ)
+    closed = scheduled = skipped = 0
+    for row in list_active_polls():
+        if not row.get("message_id"):
+            skipped += 1
+            continue
+        sent_at = _parse_ts(row.get("created_at")) or now
+        close_at = await poll_close_time(sent_at)
+        chat_id, message_id = int(row["group_chat_id"]), int(row["message_id"])
+        if close_at <= now:
+            try:
+                await bot.stop_poll(chat_id=chat_id, message_id=message_id)
+            except Exception as exc:  # already closed or deleted in Telegram
+                log.info("Could not close overdue poll %s: %s", row["poll_id"], exc)
+            delete_active_poll(row["poll_id"], chat_id)
+            closed += 1
+        elif job_queue is not None:
+            job_queue.run_once(
+                close_poll_job,
+                when=close_at,
+                data={"chat_id": chat_id, "message_id": message_id, "label": row["practice_key"]},
+                name=f"close_poll_{row['practice_key']}_{message_id}",
+            )
+            scheduled += 1
+    log.info(
+        "Poll closing restored: %d closed (overdue), %d scheduled, %d without message id.",
+        closed, scheduled, skipped,
+    )
+
+
 def poll_send_time(conf: dict, day: _dt.date, timings) -> _dt.datetime | None:
     """When an amal poll config is sent on calendar ``day`` (ignores weekdays)."""
     if conf.get("time_type", "prayer_relative") == "fixed":
@@ -142,10 +189,10 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
         allows_multiple_answers=False,
     )
     if sent_message.poll:
-        save_active_poll(sent_message.poll.id, practice_key)
+        save_active_poll(sent_message.poll.id, practice_key, message_id=sent_message.message_id)
 
     # The poll stays open until its amal day ends (Maghrib + 2 min).
-    close_at = await amal_day_end(await amal_day_of(_dt.datetime.now(BD_TZ)))
+    close_at = await poll_close_time(_dt.datetime.now(BD_TZ))
     schedule_poll_close(job_queue, sent_message, question, close_at)
     log.info(f"Sent check-in poll: {question} (open until {close_at:%Y-%m-%d %H:%M})")
 

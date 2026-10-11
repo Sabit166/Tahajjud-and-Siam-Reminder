@@ -196,3 +196,58 @@ def test_daily_report_uses_that_amal_days_answers_and_member_ids(fake_sb, bot):
     [report] = [m["text"] for m in bot.sent_messages]
     assert report.count("Abdullah (Marks 7/7)") == 2
     assert "Larry" not in report
+
+
+# ------------------------------------------------------------
+#  Closing polls across restarts (active_polls.message_id)
+# ------------------------------------------------------------
+
+def test_sent_poll_records_its_message_id(fake_sb, bot):
+    fake_sb.tables["poll_configs"] = [amal_config("quran", GROUP_A)]
+    db.init_db()
+
+    async def go():
+        db.set_current_group(GROUP_A)
+        await messaging.send_checkin(bot, "quran")
+
+    run(go())
+    [row] = fake_sb.rows("active_polls")
+    assert row["message_id"] == 2 and row["practice_key"] == "quran"
+
+
+def test_poll_is_still_tracked_before_the_column_is_migrated(fake_sb):
+    fake_sb.missing_columns["active_polls"] = {"message_id"}
+    db.save_active_poll("p1", "quran", GROUP_A, message_id=55)
+    assert fake_sb.rows("active_polls") == [
+        {"poll_id": "p1", "practice_key": "quran", "group_chat_id": GROUP_A}
+    ]
+
+
+class StopRecordingBot:
+    def __init__(self):
+        self.stopped = []
+
+    async def stop_poll(self, chat_id, message_id):
+        self.stopped.append((chat_id, message_id))
+
+
+def test_restart_closes_overdue_polls_and_rearms_the_rest(fake_sb, freeze):
+    fake_sb.tables["active_polls"] = [
+        # Monday's poll: its day ended Monday 17:42 -> close now.
+        {"poll_id": "old", "practice_key": "quran", "group_chat_id": GROUP_A,
+         "created_at": at(MON, 10, 0).isoformat(), "message_id": 11},
+        # Sent Tuesday morning: closes Tuesday 17:42 -> schedule.
+        {"poll_id": "open", "practice_key": "tahajjud", "group_chat_id": GROUP_A,
+         "created_at": at(TUE, 4, 10).isoformat(), "message_id": 12},
+        # Recorded before message ids existed: cannot be closed; keep it.
+        {"poll_id": "legacy", "practice_key": "duha", "group_chat_id": GROUP_A,
+         "created_at": at(MON, 9, 0).isoformat(), "message_id": None},
+    ]
+    freeze(at(TUE, 12, 0), messaging)
+    bot, jq = StopRecordingBot(), RecordingJobQueue()
+
+    run(messaging.restore_poll_closings(bot, jq))
+
+    assert bot.stopped == [(GROUP_A, 11)]
+    assert jq.jobs == [("close_poll_job", at(TUE, 17, 42))]
+    assert sorted(r["poll_id"] for r in fake_sb.rows("active_polls")) == ["legacy", "open"]

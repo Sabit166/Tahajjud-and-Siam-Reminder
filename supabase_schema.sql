@@ -139,3 +139,9 @@ create table if not exists public.web_sessions (
     user_id bigint not null, expires_at timestamptz not null
 );
 create index if not exists web_sessions_expiry_idx on public.web_sessions(expires_at);
+-- ============================================================
+-- 2026-10-11: Telegram message id of each sent poll, so the bot can
+-- close polls when their amal day ends even after a restart.
+-- Additive and nullable: existing rows and older code are unaffected.
+-- ============================================================
+alter table public.active_polls add column if not exists message_id bigint;
