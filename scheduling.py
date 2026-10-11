@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from telegram.ext import ContextTypes
 
-from config import RESPONSE_WINDOW_HOURS, RESPONSE_DELETE_AFTER_SECONDS, log
+from config import RESPONSE_DELETE_AFTER_SECONDS, log
 from db import delete_active_poll
 
 # ============================================================
@@ -52,13 +52,14 @@ async def close_poll_job(context: ContextTypes.DEFAULT_TYPE):
 #  SCHEDULING HELPERS
 # ============================================================
 
-def schedule_poll_close(job_queue, sent_message, label):
-    if job_queue is None or RESPONSE_WINDOW_HOURS <= 0:
+def schedule_poll_close(job_queue, sent_message, label, close_at: datetime.datetime):
+    """Close the poll at ``close_at`` (the end of its amal day)."""
+    if job_queue is None:
         return
 
     job_queue.run_once(
         close_poll_job,
-        when=datetime.timedelta(hours=RESPONSE_WINDOW_HOURS),
+        when=close_at,
         data={
             "chat_id": sent_message.chat_id,
             "message_id": sent_message.message_id,

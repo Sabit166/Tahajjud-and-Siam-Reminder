@@ -9,7 +9,9 @@ import datetime as _dt
 
 from telegram import Bot
 
-from config import RESPONSE_WINDOW_HOURS, BD_TZ, log
+import time as _time
+
+from config import BD_TZ, log
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX, current_group_id
 from scheduling import schedule_poll_close
 from hadith import fetch_hadith, format_hadith_message
@@ -29,6 +31,104 @@ from prayer_times import (
 def _chat_id() -> int:
     return current_group_id()
 
+
+# ============================================================
+#  AMAL DAY (MAGHRIB TO MAGHRIB)
+# ============================================================
+#
+# An amal day D runs from Maghrib on the previous calendar day to Maghrib
+# on day D. Its daily report is sent at Maghrib(D) + DAY_END_GRACE, and
+# that is also when every poll belonging to day D closes. A poll belongs
+# to the amal day in which it is sent.
+
+DAY_END_GRACE = _dt.timedelta(minutes=2)   # = the daily report offset
+_TIMINGS_TTL_SECONDS = 3600
+_TIMINGS_CACHE: dict[_dt.date, tuple[float, object]] = {}
+
+
+async def timings_for(day: _dt.date):
+    """Prayer times for ``day``, cached for an hour. None if unavailable."""
+    cached = _TIMINGS_CACHE.get(day)
+    if cached and _time.monotonic() - cached[0] < _TIMINGS_TTL_SECONDS:
+        return cached[1]
+    try:
+        timings = await fetch_prayer_times(date=day)
+    except Exception as exc:
+        log.warning("Prayer-time fetch for %s failed: %s", day, exc)
+        return cached[1] if cached else None
+    _TIMINGS_CACHE[day] = (_time.monotonic(), timings)
+    return timings
+
+
+async def maghrib_at(day: _dt.date) -> _dt.datetime:
+    """Maghrib on ``day``; falls back to the nearest known day's time, then 18:00."""
+    timings = await timings_for(day)
+    if timings is None and _TIMINGS_CACHE:
+        nearest = min(_TIMINGS_CACHE, key=lambda d: abs((d - day).days))
+        timings = _TIMINGS_CACHE[nearest][1]
+    if timings is None:
+        log.warning("No prayer times for %s; assuming Maghrib at 18:00.", day)
+        return BD_TZ.localize(_dt.datetime.combine(day, _dt.time(18, 0)))
+    return dt_with_tz(timings.maghrib, base=day)
+
+
+async def amal_day_of(moment: _dt.datetime) -> _dt.date:
+    """The amal day that ``moment`` falls in (the day whose Maghrib ends it)."""
+    moment = moment.astimezone(BD_TZ)
+    day = moment.date()
+    return day if moment < await maghrib_at(day) else day + _dt.timedelta(days=1)
+
+
+async def amal_day_end(day: _dt.date) -> _dt.datetime:
+    """When amal day ``day`` ends: its report is sent and its polls close."""
+    return await maghrib_at(day) + DAY_END_GRACE
+
+
+def poll_send_time(conf: dict, day: _dt.date, timings) -> _dt.datetime | None:
+    """When an amal poll config is sent on calendar ``day`` (ignores weekdays)."""
+    if conf.get("time_type", "prayer_relative") == "fixed":
+        try:
+            hour, minute = (int(x) for x in str(conf.get("fixed_time") or "").strip().split(":")[:2])
+            return BD_TZ.localize(_dt.datetime.combine(day, _dt.time(hour, minute)))
+        except Exception as exc:
+            log.warning("Invalid fixed_time '%s' for %s: %s", conf.get("fixed_time"), conf.get("id"), exc)
+            return None
+    prayer = str(conf.get("prayer_name") or "").lower().strip()
+    if not prayer or timings is None:
+        return None
+    try:
+        offset = _dt.timedelta(minutes=int(conf.get("prayer_offset_minutes", 0)))
+        return dt_with_tz(getattr(timings, prayer), base=day) + offset
+    except Exception as exc:
+        log.warning("Error calculating prayer time for %s: %s", conf.get("id"), exc)
+        return None
+
+
+async def practices_for_amal_day(day: _dt.date) -> list[str]:
+    """Active amal polls of the current group that are sent during amal day ``day``.
+
+    A poll is in day D if, on the previous or the same calendar day (when
+    that weekday is selected), it is sent between Maghrib(D-1) and
+    Maghrib(D). So Monday's pre-dawn Sawm counts only for Monday, and a
+    poll sent after Maghrib on Thursday counts for Friday.
+    """
+    from db import get_all_poll_configs
+    start = await maghrib_at(day - _dt.timedelta(days=1))
+    end = await maghrib_at(day)
+    today_timings = await timings_for(day)
+    practices = []
+    for conf in get_all_poll_configs(active_only=True):
+        days = conf.get("days_of_week")
+        days = [0, 1, 2, 3, 4, 5, 6] if days is None else days
+        for cal_day in (day - _dt.timedelta(days=1), day):
+            if cal_day.weekday() not in days:
+                continue
+            sent = poll_send_time(conf, cal_day, await timings_for(cal_day) or today_timings)
+            if sent is not None and start <= sent < end:
+                practices.append(conf["id"])
+                break
+    return practices
+
 async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     from db import get_practice_info
     p = get_practice_info(practice_key)
@@ -44,10 +144,10 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
     if sent_message.poll:
         save_active_poll(sent_message.poll.id, practice_key)
 
-    if RESPONSE_WINDOW_HOURS > 0:
-        log.info(f"Check-in poll for {question} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
-        schedule_poll_close(job_queue, sent_message, question)
-    log.info(f"Sent check-in poll: {question}")
+    # The poll stays open until its amal day ends (Maghrib + 2 min).
+    close_at = await amal_day_end(await amal_day_of(_dt.datetime.now(BD_TZ)))
+    schedule_poll_close(job_queue, sent_message, question, close_at)
+    log.info(f"Sent check-in poll: {question} (open until {close_at:%Y-%m-%d %H:%M})")
 
 
 def _report_label(practice: str) -> str:
@@ -111,13 +211,14 @@ def _chunk_blocks(title: str, header_separator: str, blocks: list[str]) -> list[
     return out
 
 
-async def send_weekly_report(bot: Bot):
+async def send_weekly_report(bot: Bot, report_day: _dt.date | None = None):
+    """Weekly leaderboard for the 7 amal days ending with ``report_day``."""
     from db import get_all_poll_configs
 
     # Only this group's own amal polls count; answers to polls the group
     # has since deleted are left out (their weights no longer exist).
     group_amals = {c["id"] for c in get_all_poll_configs()}
-    rows = [r for r in get_weekly_summary() if r[1] in group_amals]
+    rows = [r for r in get_weekly_summary(report_day) if r[2] in group_amals]
     if not rows:
         await bot.send_message(
             chat_id=_chat_id(),
@@ -127,52 +228,36 @@ async def send_weekly_report(bot: Bot):
 
     from db import get_practice_weight, get_weekly_max
 
-    # Group rows by user. Each amal (including each nightly sub-practice)
-    # counts as its OWN mark — no grouping/collapsing.
-    user_data: dict[str, dict[str, int]] = {}
-    for full_name, practice, completed, total in rows:
-        user_data.setdefault(full_name, {})
-        user_data[full_name][practice] = int(completed)
+    # Group rows by member id (names can repeat). Each amal counts as its
+    # OWN mark — no grouping/collapsing.
+    names: dict[int, str] = {}
+    user_data: dict[int, dict[str, int]] = {}
+    for user_id, full_name, practice, completed, total in rows:
+        names[user_id] = full_name
+        user_data.setdefault(user_id, {})[practice] = int(completed)
 
-    # Per-user weekly marks (Q8=A: one combined leaderboard).
-    user_weekly_marks: dict[str, int] = {}
-    user_max_marks: dict[str, int] = {}
-    for full_name, data in user_data.items():
-        # Sum completed practices using each amal's leaderboard weight.
-        total = sum(
+    # Per-user weekly marks and the maximum for the amals they took part in.
+    user_weekly_marks: dict[int, int] = {}
+    user_max_marks: dict[int, int] = {}
+    for user_id, data in user_data.items():
+        user_weekly_marks[user_id] = sum(
             completed * get_practice_weight(practice)
             for practice, completed in data.items()
         )
-        user_weekly_marks[full_name] = total
-        # Max possible weighted marks = sum of each practice's weekly
-        # limit multiplied by its leaderboard weight.
-        present = set(data.keys())
-        if present:
-            user_max_marks[full_name] = sum(
-                get_weekly_max(p) * get_practice_weight(p)
-                for p in present
-            )
-        else:
-            active_amals = [
-                c["id"]
-                for c in get_all_poll_configs(active_only=True)
-                if c.get("poll_type", "amal_poll") == "amal_poll"
-            ]
-            user_max_marks[full_name] = sum(
-                get_weekly_max(p) * get_practice_weight(p)
-                for p in active_amals
-            ) or 100
+        user_max_marks[user_id] = sum(
+            get_weekly_max(p) * get_practice_weight(p) for p in data
+        )
 
     # Sort users by marks desc, then name asc for stable tie-breaking.
     sorted_users = sorted(
         user_weekly_marks.items(),
-        key=lambda kv: (-kv[1], kv[0]),
+        key=lambda kv: (-kv[1], names[kv[0]], kv[0]),
     )
 
     blocks: list[str] = []
-    for rank, (full_name, marks) in enumerate(sorted_users, start=1):
-        block = f"{rank}. {full_name} (Marks {marks}/{user_max_marks[full_name]})\n"
-        for practice, completed in sorted(user_data[full_name].items()):
+    for rank, (user_id, marks) in enumerate(sorted_users, start=1):
+        block = f"{rank}. {names[user_id]} (Marks {marks}/{user_max_marks[user_id]})\n"
+        for practice, completed in sorted(user_data[user_id].items()):
             label = _report_label(practice)
             max_n = get_weekly_max(practice)
             weight = get_practice_weight(practice)
@@ -190,8 +275,15 @@ async def send_weekly_report(bot: Bot):
         )
     log.info("Sent weekly report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
 
-async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
-    scheduled_practices, summary, report_start_iso, report_end_iso = get_daily_summary(report_end)
+async def send_daily_report(bot: Bot, report_day: _dt.date | None = None):
+    """Daily leaderboard for one amal day (previous Maghrib to this Maghrib).
+
+    Only polls actually sent during that amal day are scored, and only
+    answers recorded for that amal day count.
+    """
+    report_day = report_day or _dt.datetime.now(BD_TZ).date()
+    scheduled_practices = await practices_for_amal_day(report_day)
+    names, summary = get_daily_summary(report_day, scheduled_practices)
 
     if not summary:
         await bot.send_message(
@@ -202,36 +294,33 @@ async def send_daily_report(bot: Bot, report_end: _dt.datetime | None = None):
 
     # Compute weighted per-user marks. Each practice contributes its configured weight.
     from db import get_practice_weight
-    user_marks: dict[str, int] = {}
-    for full_name, results in summary.items():
-        marks = 0
-        for practice in scheduled_practices:
-            if results.get(practice, 0):
-                marks += get_practice_weight(practice)
-        user_marks[full_name] = marks
+    user_marks: dict[int, int] = {}
+    for user_id, results in summary.items():
+        user_marks[user_id] = sum(
+            get_practice_weight(practice)
+            for practice in scheduled_practices
+            if results.get(practice, 0)
+        )
 
     full_marks = sum(
         get_practice_weight(practice) for practice in scheduled_practices
     )
-    sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], kv[0]))
+    sorted_users = sorted(user_marks.items(), key=lambda kv: (-kv[1], names[kv[0]], kv[0]))
 
-    # Pull current streaks for users who responded in this report window,
-    # so each practice line can show "✅ (🔥N)" / "❌ (🔥0)". Missed
-    # entries reset to 0; done entries are at least 1.
-    streaks_by_user = get_daily_streaks(
-        report_start_iso, report_end_iso, scheduled_practices,
-    )
+    # Current streaks, so each practice line can show "✅ (N)" / "❌ (0)".
+    # Missed entries reset to 0; done entries are at least 1.
+    streaks_by_user = get_daily_streaks(list(summary), scheduled_practices)
 
     # Build one block per user (never split a user across messages),
     # then pack blocks into messages that stay under Telegram's 4096-char
     # limit. Each message gets a "(i/N)" header.
     blocks: list[str] = []
-    for rank, (full_name, marks) in enumerate(sorted_users, start=1):
-        user_streaks = streaks_by_user.get(full_name, {})
-        block = f"{rank}. {full_name} (Marks {marks}/{full_marks})\n"
+    for rank, (user_id, marks) in enumerate(sorted_users, start=1):
+        user_streaks = streaks_by_user.get(user_id, {})
+        block = f"{rank}. {names[user_id]} (Marks {marks}/{full_marks})\n"
         for practice in scheduled_practices:
             label = _report_label(practice)
-            did_it = summary[full_name].get(practice, 0)
+            did_it = summary[user_id].get(practice, 0)
             mark = "✅" if did_it else "❌"
             streak_n = user_streaks.get(practice, 0) if did_it else 0
             block += f"  -- {label}: {mark} ({streak_n})\n"
@@ -303,9 +392,9 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
         _SCHEDULED_EVENTS.add(key)
         bot = context.bot
         if event == DAILY_REPORT_EVENT:
-            await send_daily_report(bot, report_end=event_at)
+            await send_daily_report(bot, report_day=event_at.date())
         elif event == WEEKLY_REPORT_EVENT:
-            await send_weekly_report(bot)
+            await send_weekly_report(bot, report_day=event_at.date())
         else:
             await send_checkin(bot, event, context.job_queue)
         log.info("Dispatched scheduled event %s at %s.", event, event_at)
@@ -318,11 +407,14 @@ async def fetch_today_timings():
     jobs fetch once and hand the result to each group's tick. Returns
     None on failure; the job simply retries on its next run.
     """
+    today = _dt.datetime.now(BD_TZ).date()
     try:
-        return await fetch_prayer_times(date=_dt.datetime.now(BD_TZ).date())
+        timings = await fetch_prayer_times(date=today)
     except Exception as exc:
         log.warning("Prayer-time fetch failed; will retry next run: %s", exc)
         return None
+    _TIMINGS_CACHE[today] = (_time.monotonic(), timings)  # reuse for amal-day math
+    return timings
 
 
 async def _prayer_schedule_tick(context, timings=None):
@@ -344,33 +436,14 @@ async def _prayer_schedule_tick(context, timings=None):
 
     for conf in configs:
         days = conf.get("days_of_week")
-        if days is None:
-            days = [0, 1, 2, 3, 4, 5, 6]
-        if today.weekday() not in days:
-            continue
-
-        cid = conf["id"]
-        time_type = conf.get("time_type", "prayer_relative")
-
-        if time_type == "fixed" and conf.get("fixed_time"):
-            try:
-                parts = str(conf["fixed_time"]).strip().split(":")
-                hour, minute = int(parts[0]), int(parts[1])
-                target_naive = _dt.datetime.combine(today, _dt.time(hour, minute))
-                target_dt = BD_TZ.localize(target_naive)
-                events.append((cid, target_dt))
-            except Exception as exc:
-                log.warning("Invalid fixed_time '%s' for %s: %s", conf.get("fixed_time"), cid, exc)
-        elif time_type == "prayer_relative" and conf.get("prayer_name"):
-            p_name = str(conf["prayer_name"]).lower().strip()
-            offset_mins = int(conf.get("prayer_offset_minutes", 0))
-            try:
-                target_dt = at(p_name, _dt.timedelta(minutes=offset_mins))
-                events.append((cid, target_dt))
-            except Exception as exc:
-                log.warning("Error calculating prayer time for %s: %s", cid, exc)
+        days = [0, 1, 2, 3, 4, 5, 6] if days is None else days
+        if today.weekday() in days:
+            sent_at = poll_send_time(conf, today, timings)
+            if sent_at is not None:
+                events.append((conf["id"], sent_at))
 
     # Reports go to every group, including ones without any amal polls.
+    # The daily report time equals amal_day_end(today), when polls close.
     for event, prayer, offset_mins, weekdays in BUILTIN_REPORTS:
         if today.weekday() in weekdays:
             events.append((event, at(prayer, _dt.timedelta(minutes=offset_mins))))

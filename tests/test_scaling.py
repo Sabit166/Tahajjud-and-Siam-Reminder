@@ -89,16 +89,14 @@ def test_daily_streaks_use_one_query_for_all_members(fake_sb):
     ] + [{"group_chat_id": GROUP_B, "user_id": 1, "practice": "quran", "current_streak": 99}]
     db.set_current_group(GROUP_A)
 
-    result = db.get_daily_streaks(
-        (now - dt.timedelta(days=1)).isoformat(), now.isoformat(), ["quran"]
-    )
+    result = db.get_daily_streaks(list(users), ["quran"])
 
     # One page plus the empty page that ends pagination, independent of
     # the member count (was 40: one query per member).
     assert fake_sb.selects.count("streaks") == 2
     assert len(result) == 40
-    assert result["User 0001"] == {"quran": 1}   # not group B's 99
-    assert result["User 0040"] == {"quran": 40}
+    assert result[1] == {"quran": 1}   # not group B's 99
+    assert result[40] == {"quran": 40}
 
 
 # ------------------------------------------------------------
@@ -121,7 +119,7 @@ def test_weekly_summary_counts_every_row(fake_sb, server_cap):
     rows = db.get_weekly_summary()
 
     assert len(rows) == 300  # every (member, poll) pair
-    assert all(total == 7 and done == 4 for _, _, done, total in rows)
+    assert all(total == 7 and done == 4 for _, _, _, done, total in rows)
 
 
 def test_daily_summary_counts_every_row(fake_sb):
@@ -134,7 +132,7 @@ def test_daily_summary_counts_every_row(fake_sb):
     db.init_db()
     db.set_current_group(GROUP_A)
 
-    _, summary, _, _ = db.get_daily_summary(report_end=now)
+    names, summary = db.get_daily_summary(now.date(), ["quran", "tahajjud"])
 
-    assert len(summary) == 700
+    assert len(summary) == 700 and len(names) == 700
     assert all(v == {"quran": 1, "tahajjud": 1} for v in summary.values())

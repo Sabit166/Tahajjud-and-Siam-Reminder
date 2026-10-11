@@ -83,7 +83,8 @@ def main():
 
     async def _post_init(ctx):
         set_bot_instance(app.bot, app.job_queue)
-        cleanup_old_active_polls(24)
+        # Polls stay open up to ~24h (until their amal day ends); keep a margin.
+        cleanup_old_active_polls(48)
         await register_bot_commands(app.bot)
 
         # Start FastAPI Web Server concurrently in the same asyncio event loop

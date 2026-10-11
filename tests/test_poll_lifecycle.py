@@ -203,8 +203,9 @@ def _response(group, user_id, name, practice, did_it, when):
 
 
 def test_daily_and_weekly_reports_are_per_group(fake_sb, bot):
-    now = dt.datetime.now(BD_TZ)
-    earlier = now - dt.timedelta(hours=1)
+    # Answers stored for amal day `day` (as the answer handler does).
+    day = dt.date(2026, 10, 7)
+    earlier = BD_TZ.localize(dt.datetime(2026, 10, 7, 11, 0))
     fake_sb.tables["poll_configs"] = [
         amal_config("tahajjud", GROUP_A, title="Tahajjud", weight=15),
         amal_config("quran", GROUP_A, title="Quran", weight=7),
@@ -218,10 +219,10 @@ def test_daily_and_weekly_reports_are_per_group(fake_sb, bot):
 
     async def go():
         db.set_current_group(GROUP_A)
-        await messaging.send_daily_report(bot, report_end=now)
-        await messaging.send_weekly_report(bot)
+        await messaging.send_daily_report(bot, report_day=day)
+        await messaging.send_weekly_report(bot, report_day=day)
         db.set_current_group(GROUP_B)
-        await messaging.send_daily_report(bot, report_end=now)
+        await messaging.send_daily_report(bot, report_day=day)
 
     run(go())
     daily_a, weekly_a, daily_b = (m["text"] for m in bot.sent_messages)

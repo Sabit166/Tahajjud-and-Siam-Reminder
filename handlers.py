@@ -5,6 +5,7 @@ group members.
 
 from __future__ import annotations
 
+import datetime as _dt
 import html
 from urllib.parse import quote
 
@@ -28,26 +29,39 @@ from scheduling import schedule_message_delete
 #  HANDLERS
 # ============================================================
 
+def _parse_ts(value) -> _dt.datetime | None:
+    """Parse a Supabase timestamptz string; None if missing or invalid."""
+    if not value:
+        return None
+    try:
+        parsed = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else BD_TZ.localize(parsed)
+
+
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     if answer is None or answer.user is None:
         return
 
     user = answer.user
-    from db import get_poll_group
+    from db import get_active_poll
     full_name = user.full_name or user.username or str(user.id)
     username = user.username or ""
     poll_id = answer.poll_id
-    chat_id = get_poll_group(poll_id)
-    if not chat_id:
+    poll = get_active_poll(poll_id)
+    if not poll:
         log.info(f"Received poll answer from {full_name} for untracked poll ID {poll_id}")
         return
+    chat_id = int(poll["group_chat_id"])
     set_current_group(chat_id)
 
-    practice_key = get_poll_practice(poll_id, chat_id)
+    practice_key = poll.get("practice_key") or get_poll_practice(poll_id, chat_id)
 
     if practice_key:
         from db import get_practice_info, get_practice_weight
+        from messaging import amal_day_of, amal_day_end
         p_info = get_practice_info(practice_key)
         label = p_info.get("label") or p_info.get("title", practice_key)
 
@@ -55,13 +69,24 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             log.info(f"User {full_name} retracted vote for {label}")
             return
 
-        did_it = 1 if 0 in answer.option_ids else 0
-        save_response(user.id, username, full_name, practice_key, did_it)
+        # The answer belongs to the amal day the poll was sent in, and is
+        # only accepted until that day ends (the poll is closed then; this
+        # also covers polls whose close job was lost in a restart).
+        now = _dt.datetime.now(BD_TZ)
+        sent_at = _parse_ts(poll.get("created_at")) or now
+        amal_day = await amal_day_of(sent_at)
+        if now > await amal_day_end(amal_day):
+            log.info(f"Ignored late answer from {full_name} for {label} (amal day {amal_day} has ended)")
+            return
 
-        # Update streak — pass the date the poll was meant for (today in BD_TZ).
-        import datetime as _dt
-        scheduled_date = _dt.datetime.now(BD_TZ).strftime("%Y-%m-%d")
-        update_streak_for_response(user.id, practice_key, scheduled_date, bool(did_it))
+        did_it = 1 if 0 in answer.option_ids else 0
+        save_response(user.id, username, full_name, practice_key, did_it, response_date=amal_day)
+
+        # Streaks follow the calendar day the poll was sent, matching the
+        # poll's configured weekdays.
+        update_streak_for_response(
+            user.id, practice_key, sent_at.astimezone(BD_TZ).date().isoformat(), bool(did_it)
+        )
 
         if did_it:
             points = get_practice_weight(practice_key)

@@ -20,7 +20,7 @@ from typing import Optional
 
 from supabase import create_client, Client
 
-from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, log
+from config import SUPABASE_URL, SUPABASE_API_KEY, BD_TZ, log
 
 
 # ============================================================
@@ -615,11 +615,26 @@ def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optiona
 
 
 def get_poll_group(poll_id: str) -> int:
+    row = get_active_poll(poll_id)
+    return int(row["group_chat_id"]) if row else 0
+
+
+def get_active_poll(poll_id: str) -> Optional[dict]:
+    """Return {group_chat_id, practice_key, created_at} for a sent poll.
+
+    Telegram poll ids are globally unique, so no group filter is needed;
+    created_at is when the poll was sent.
+    """
     try:
-        row = (_sb().table("active_polls").select("group_chat_id").eq("poll_id", poll_id).limit(1).execute().data or [None])[0]
-        return int(row["group_chat_id"]) if row else 0
-    except Exception:
-        return 0
+        rows = (
+            _sb().table("active_polls")
+            .select("group_chat_id,practice_key,created_at")
+            .eq("poll_id", poll_id).limit(1).execute().data
+        )
+        return rows[0] if rows else None
+    except Exception as exc:
+        log.warning("Could not read active poll %s: %s", poll_id, exc)
+        return None
 
 
 def delete_active_poll(poll_id: str, group_chat_id: int | None = None):
@@ -660,11 +675,15 @@ def save_response(
     practice: str,
     did_it: int,
     group_chat_id: int | None = None,
+    response_date: datetime.date | None = None,
 ):
-    """Upsert today's response for (user, practice). did_it is 0/1 for
-    backward compatibility with the handler; we coerce to a real bool
-    and store in the boolean column."""
-    today = datetime.datetime.now(BD_TZ).date().isoformat()
+    """Upsert the response for (user, practice, amal day).
+
+    ``response_date`` is the amal day (Maghrib to Maghrib) of the poll
+    that was answered; it defaults to today's calendar date. did_it is
+    0/1 and is stored as a boolean.
+    """
+    today = (response_date or datetime.datetime.now(BD_TZ).date()).isoformat()
     now = datetime.datetime.now(BD_TZ).isoformat()
 
     payload = {
@@ -711,10 +730,10 @@ def _select_all(build_query) -> list[dict]:
         rows.extend(page)
 
 
-def get_weekly_summary():
-    """Return [(full_name, practice, completed, total), ...] for the
-    last 7 days (inclusive of today)."""
-    today = datetime.datetime.now(BD_TZ).date()
+def get_weekly_summary(end_day: datetime.date | None = None):
+    """Return [(user_id, full_name, practice, completed, total), ...] for
+    the 7 amal days ending with ``end_day`` (default: today)."""
+    today = end_day or datetime.datetime.now(BD_TZ).date()
     week_ago = today - datetime.timedelta(days=6)
     group_id = _group_id()
 
@@ -747,74 +766,42 @@ def get_weekly_summary():
 
     out = []
     for (uid, practice), (done, total) in agg.items():
-        out.append((name_by_user[uid], practice, done, total))
-    out.sort(key=lambda r: (r[0], r[1]))
+        out.append((uid, name_by_user[uid], practice, done, total))
+    out.sort(key=lambda r: (r[1], r[0], r[2]))
     return out
 
 
-def get_daily_summary(report_end: datetime.datetime | None = None) -> tuple[list[str], dict[str, dict[str, int]], str, str]:
-    """Return (scheduled_practices, summary, report_start_iso, report_end_iso).
+def get_daily_summary(
+    amal_day: datetime.date, practices: list[str]
+) -> tuple[dict[int, str], dict[int, dict[str, int]]]:
+    """Return (names, done) for one amal day (Maghrib to Maghrib).
 
-    summary is keyed by full_name -> {practice: did_it_bool}.
+    names: {user_id: full_name}; done: {user_id: {practice: 0/1}}.
+    Members are keyed by id so two people with the same name stay apart.
     """
-    now = datetime.datetime.now(BD_TZ)
-    report_end = report_end or now.replace(
-        hour=DAILY_REPORT_HOUR,
-        minute=DAILY_REPORT_MINUTE,
-        second=0,
-        microsecond=0,
-    )
-    if now < report_end:
-        report_end -= datetime.timedelta(days=1)
-    report_start = report_end - datetime.timedelta(days=1)
-
-    # Build scheduled practices dynamically from active poll configs
-    active_configs = get_all_poll_configs(active_only=True)
-    scheduled_practices: list[str] = []
-    for c in active_configs:
-        if c.get("poll_type", "amal_poll") != "amal_poll":
-            continue
-        days = c.get("days_of_week") or [0, 1, 2, 3, 4, 5, 6]
-        if (report_end.weekday() in days) or (report_start.weekday() in days):
-            scheduled_practices.append(c["id"])
-
-    # A group with no amal polls has nothing to report on.
-    if not scheduled_practices:
-        return ([], {}, report_start.isoformat(), report_end.isoformat())
-
+    if not practices:
+        return {}, {}
     group_id = _group_id()
     try:
         rows = _select_all(lambda: (
             _sb()
             .table("responses")
-            .select("full_name,practice,did_it")
-            .gt("recorded_at", report_start.isoformat())
-            .lte("recorded_at", report_end.isoformat())
-            .in_("practice", scheduled_practices)
+            .select("user_id,full_name,practice,did_it")
+            .eq("response_date", amal_day.isoformat())
+            .in_("practice", practices)
             .eq("group_chat_id", group_id)
             .order("id")
         ))
     except Exception as exc:
         log.error("Could not load daily summary: %s", exc)
-        return (
-            scheduled_practices,
-            {},
-            report_start.isoformat(),
-            report_end.isoformat(),
-        )
+        return {}, {}
 
-    summary: dict[str, dict[str, int]] = {}
+    names: dict[int, str] = {}
+    done: dict[int, dict[str, int]] = {}
     for row in rows:
-        summary.setdefault(row["full_name"], {})[row["practice"]] = (
-            1 if row["did_it"] else 0
-        )
-
-    return (
-        scheduled_practices,
-        summary,
-        report_start.isoformat(),
-        report_end.isoformat(),
-    )
+        names[row["user_id"]] = row["full_name"]
+        done.setdefault(row["user_id"], {})[row["practice"]] = 1 if row["did_it"] else 0
+    return names, done
 
 
 # ============================================================
@@ -951,45 +938,21 @@ def _is_consecutive_scheduled(
 
 
 def get_daily_streaks(
-    report_start: str, report_end: str, practices: list[str]
-) -> dict[str, dict[str, int]]:
-    """
-    Build {full_name: {practice: current_streak}} for users who responded
-    in the [report_start, report_end) window, restricted to `practices`.
+    user_ids: list[int], practices: list[str]
+) -> dict[int, dict[str, int]]:
+    """Return {user_id: {practice: current_streak}} in one query.
 
     Users/practices with no row in `streaks` are simply absent.
     """
+    if not user_ids or not practices:
+        return {}
     group_id = _group_id()
     try:
-        # (user_id, full_name) pairs that responded in the window.
-        user_rows = _select_all(lambda: (
-            _sb()
-            .table("responses")
-            .select("user_id,full_name")
-            .gt("recorded_at", report_start)
-            .lte("recorded_at", report_end)
-            .in_("practice", practices)
-            .eq("group_chat_id", group_id)
-            .order("id")
-        ))
-    except Exception as exc:
-        log.error("Could not load daily streaks: %s", exc)
-        return {}
-
-    # De-dup (one user_id may appear on multiple practices)
-    seen: dict[int, str] = {}
-    for r in user_rows:
-        seen.setdefault(r["user_id"], r["full_name"])
-    if not seen:
-        return {}
-
-    # One query for all members instead of one per member.
-    try:
-        streak_rows = _select_all(lambda: (
+        rows = _select_all(lambda: (
             _sb()
             .table("streaks")
             .select("user_id,practice,current_streak")
-            .in_("user_id", list(seen))
+            .in_("user_id", list(user_ids))
             .in_("practice", practices)
             .eq("group_chat_id", group_id)
             .order("user_id")
@@ -998,13 +961,9 @@ def get_daily_streaks(
     except Exception as exc:
         log.warning("Could not load streaks: %s", exc)
         return {}
-
-    result: dict[str, dict[str, int]] = {}
-    for r in streak_rows:
-        merged = result.setdefault(seen[r["user_id"]], {})
-        merged[r["practice"]] = max(
-            merged.get(r["practice"], 0), int(r["current_streak"])
-        )
+    result: dict[int, dict[str, int]] = {}
+    for r in rows:
+        result.setdefault(r["user_id"], {})[r["practice"]] = int(r["current_streak"])
     return result
 
 

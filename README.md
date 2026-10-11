@@ -59,7 +59,7 @@ The **daily and weekly reports are automatic** for every group, so you don't set
 
 | Report | When | Covers |
 |---|---|---|
-| Daily Report | Every day, 2 minutes after Maghrib | The last 24 hours |
+| Daily Report | Every day, 2 minutes after Maghrib | That amal day: from the previous Maghrib to this Maghrib |
 | Weekly Report | Friday, 5 minutes after Maghrib | The last 7 days |
 
 Reports only include **your group's members** and **your group's amal polls**. Until your group has polls and answers, the reports say that no responses were recorded.
@@ -85,8 +85,8 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 
 ### 5. How scoring works
 
-- **Answering a poll:** the first option ("done") records the amal as completed and earns that poll's marks. The second option records it as missed. Members can change their vote, and the latest answer for the day counts.
-- **Daily Report:** covers the 24 hours before the report is sent. Each member's score is the total marks of the polls they marked done, out of the maximum for that day's scheduled polls. Each line also shows their current streak.
+- **Answering a poll:** the first option ("done") records the amal as completed and earns that poll's marks. The second option records it as missed. Members can change their vote while the poll is open; the latest answer counts.
+- **Daily Report:** covers one **amal day**, from the previous Maghrib to this Maghrib. It includes the polls sent during that day and the answers given to them. A poll sent after Maghrib belongs to the next day; a poll that runs only on certain weekdays (e.g. Sawm on Mon & Thu) appears only in the report of the day it was sent. Each member's score is the total marks of the polls they marked done, out of the day's maximum. Each line also shows their current streak.
 - **Weekly Report:** covers the last 7 days. For every amal it shows how many times each member completed it out of the number of scheduled days, with marks, ranked by total marks. Answers to polls the group has since deleted aren't counted.
 - **Streaks:** count consecutive scheduled days a member completed an amal. Answering "missed" resets the streak to 0.
 
@@ -94,7 +94,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 
 | Message | When |
 |---|---|
-| Check-in polls | At each poll's configured time and days. Polls close automatically after 24 hours. |
+| Check-in polls | At each poll's configured time and days. Each poll closes when its amal day ends: at the next Maghrib + 2 minutes, when the daily report is sent. |
 | Daily Report | Every day, 2 minutes after Maghrib |
 | Weekly Report | Friday, 5 minutes after Maghrib |
 | Thank-you reply ("MashaAllah …") | After each answer. Deleted automatically after 10 seconds. |
@@ -107,7 +107,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 ## Member guide
 
 - When a poll appears, tap your answer. The **first** option means you did it; the **second** means you missed it. Polls are not anonymous, because the bot needs to know who answered.
-- You can change your answer while the poll is open. Your latest answer for the day counts.
+- You can change your answer while the poll is open. Each poll closes at Maghrib + 2 minutes, when the daily report is posted, so answer before then.
 - The bot confirms with a short message that disappears after 10 seconds.
 - Check the daily and weekly reports to see your marks and streaks.
 
@@ -125,7 +125,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 | Dashboard shows *"Open this setup link from Telegram."* | You opened the link outside Telegram. Use the button in the bot chat. |
 | The group gets no polls | Check the dashboard: does the group have active polls scheduled for today's weekday? A new group starts with none. |
 | A report says no responses were recorded | The group has no amal polls yet, or nobody answered in that period. |
-| Answers aren't being counted | Make sure members answer polls the bot sent in the last 24 hours. Answers to closed or very old polls aren't recorded. If it continues, the operator should check the logs (see below). |
+| Answers aren't being counted | Polls close at Maghrib + 2 minutes, when the daily report is sent, and later answers aren't recorded. After a bot restart, a poll can still look open in Telegram past that time, but votes on it are ignored. If it continues, the operator should check the logs (see below). |
 
 ---
 
@@ -189,7 +189,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `PORT` / `WEB_PORT` | no | Web server port, default `8000` (Railway sets `PORT`) |
 | `WEB_HOST` | no | Bind address, default `0.0.0.0` |
 
-Fixed settings in `config.py`: polls close after 24 hours, and reply messages are deleted after 10 seconds.
+Fixed settings: polls close at the end of their amal day (Maghrib + 2 minutes, `messaging.DAY_END_GRACE`), the reports run at the times in `messaging.BUILTIN_REPORTS`, and reply messages are deleted after 10 seconds (`config.py`).
 
 ### Supabase setup (one time)
 
@@ -268,7 +268,7 @@ docker compose logs -f
 
 - Every unhandled error is logged as `Unhandled error in update|job …` with the poll ID, chat ID, or job name involved.
 - If one group's scheduled run fails, it's logged as `Schedule tick failed for group <id>`, and the other groups carry on.
-- `Received poll answer … for untracked poll ID …` means the answer was for a poll the bot has no record of (e.g. older than 24 hours). Nothing is recorded.
+- `Received poll answer ... for untracked poll ID ...` means the answer was for a poll the bot has no record of. `Ignored late answer ...` means the poll's amal day had already ended. Nothing is recorded in either case.
 
 ### Security
 

@@ -38,10 +38,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY", "")
 HADITH_API_KEY = os.getenv("HADITH_API_KEY", "")
 
-RESPONSE_WINDOW_HOURS = 24
+# Polls close when their amal day ends (Maghrib + 2 minutes, when the
+# daily report is sent); see messaging.amal_day_end.
 RESPONSE_DELETE_AFTER_SECONDS = 10
-DAILY_REPORT_HOUR = 18
-DAILY_REPORT_MINUTE = 30
 
 # Web server and mobile admin dashboard settings
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")

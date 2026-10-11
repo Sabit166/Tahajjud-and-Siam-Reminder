@@ -225,3 +225,24 @@ def fake_sb(monkeypatch):
 @pytest.fixture
 def bot():
     return FakeBot()
+
+
+DEFAULT_MAGHRIB = __import__("datetime").time(17, 40)
+
+
+@pytest.fixture(autouse=True)
+def default_prayer_times(monkeypatch):
+    """Never hit Aladhan in tests: Maghrib 17:40, other prayers 05:00.
+    Tests can override messaging.fetch_prayer_times themselves."""
+    import datetime as _dt
+    import messaging
+    from prayer_times import PrayerTimes
+
+    async def fake_fetch(*_a, **_k):
+        t = _dt.time(5, 0)
+        return PrayerTimes(sunrise=t, fajr=t, dhuhr=t, asr=t, maghrib=DEFAULT_MAGHRIB, isha=t)
+
+    monkeypatch.setattr(messaging, "fetch_prayer_times", fake_fetch)
+    messaging._TIMINGS_CACHE.clear()
+    yield
+    messaging._TIMINGS_CACHE.clear()
