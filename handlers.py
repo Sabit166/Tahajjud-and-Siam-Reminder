@@ -5,6 +5,7 @@ group members.
 
 from __future__ import annotations
 
+import html
 from urllib.parse import quote
 
 from telegram import Update
@@ -12,7 +13,6 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import BD_TZ, log
-from practices import GROUP_AMAL_LABELS
 from db import (
     get_poll_practice,
     save_response,
@@ -216,23 +216,47 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.error("Unhandled error in %s%s", where, detail, exc_info=context.error)
 
 
+_WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _group_amal_lines(chat_id: int) -> list[str]:
+    """Bullet lines for this group's active amal polls, e.g. "• Sawm (Mon, Thu)"."""
+    from db import get_all_poll_configs
+    try:
+        configs = get_all_poll_configs(active_only=True, group_chat_id=chat_id)
+    except Exception as exc:
+        log.warning("Could not load amal list for group %s: %s", chat_id, exc)
+        return []
+    lines = []
+    for conf in configs:
+        title = html.escape(str(conf.get("title") or conf["id"]))
+        days = sorted(set(conf.get("days_of_week") or range(7)))
+        if len(days) < 7:
+            title += " (" + ", ".join(_WEEKDAY_NAMES[d] for d in days if 0 <= d < 7) + ")"
+        lines.append(f"• {title}\n")
+    return lines
+
+
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if message is None or not message.new_chat_members:
         return
 
+    amal_lines = _group_amal_lines(message.chat_id)
+
     for member in message.new_chat_members:
         if member.is_bot:
             continue
 
-        display_name = member.full_name or member.username or "brother"
+        display_name = html.escape(member.full_name or member.username or "brother")
         welcome_text = (
             f"Assalamu Alaikum wa Rahmatullahi wa Barakatuh, <b>{display_name}</b>\n\n"
             "Welcome to our little circle of remembrance and accountability. May Allah make your stay here beneficial, easy, and full of barakah.\n\n"
-            "Here is the amal we follow together:\n"
         )
-        for label in GROUP_AMAL_LABELS:
-            welcome_text += f"• {label}\n"
+        if amal_lines:
+            welcome_text += "Here is the amal we follow together:\n" + "".join(amal_lines)
+        else:
+            welcome_text += "Our group's amal list will be shared here soon, InshaAllah.\n"
 
         welcome_text += (
             "\nWe ask Allah to accept every effort, even the small ones, and to keep our hearts firm upon goodness. Ameen."

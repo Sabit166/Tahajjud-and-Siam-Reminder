@@ -58,21 +58,3 @@ SCHEDULED_WEEKDAYS: dict[str, set[int]] = {
     "surah_kahf": {4},      # Friday
 }
 
-GROUP_AMAL_LABELS = [
-    "Morning Adhkar",
-    "Fazr Jamaat",
-    "Ishraq Salat",
-    "Read 2 ayah of the Quran",
-    "Evening Adhkar",
-    "Salawat on Rasulullah",
-    "Sawm",
-    "Surah Kahf",
-    "Tahajjud Salat",
-    "Nightly Amal",
-    "Surat Al-Mulk",
-    "Surat As-Sajdah",
-    "Surat Al-Baqarah (Last 2 ayats)",
-    "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
-    "Istighfar 100x",
-]
-

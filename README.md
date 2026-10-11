@@ -99,7 +99,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 | Weekly Report | Friday, 5 minutes after Maghrib |
 | Thank-you reply ("MashaAllah …") | After each answer. Deleted automatically after 10 seconds. |
 | Hadith reminder | At each of the five daily prayers |
-| Welcome message | When a new member joins |
+| Welcome message | When a new member joins. It lists your group's active amal polls (with their days, if not daily). |
 
 ---
 
@@ -154,7 +154,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `web_server.py` | Dashboard REST API and Mini App authentication |
 | `static/` | Dashboard frontend (`index.html`, `app.js`, `styles.css`) |
 | `prayer_times.py` / `hadith.py` | Aladhan prayer times (Dhaka) and HadithAPI client |
-| `practices.py` | Static text (welcome message list) |
+| `practices.py` | Legacy practice constants |
 | `supabase_schema.sql` | Database schema, including the multi-group migration |
 | `tests/` | Automated tests (no network needed) |
 
