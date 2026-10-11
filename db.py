@@ -1,14 +1,6 @@
 """
-Database helpers — Supabase/PostgREST implementation.
-
-Public API is intentionally identical to the old SQLite version so the
-other modules (handlers, messaging, scheduling, main) don't need
-changes. All work is done through the supabase client.
-
-Tables (created by supabase_schema.sql):
-    responses     -- one row per (user_id, practice, date)
-    active_polls  -- poll_id -> practice_key
-    streaks       -- one row per (user_id, practice)
+Database helpers (Supabase/PostgREST). Every table is keyed by the
+Telegram group's chat id; see supabase_schema.sql for the schema.
 """
 
 from __future__ import annotations
@@ -41,9 +33,6 @@ def clear_current_group() -> None:
     previous_group = int(_current_group_id.get())
     if previous_group:
         _POLL_CONFIGS_CACHE.pop(previous_group, None)
-        for (group_id, poll_id) in list(_ACTIVE_POLL_CACHE):
-            if group_id == previous_group:
-                _ACTIVE_POLL_CACHE.pop((group_id, poll_id), None)
     _current_group_id.set(0)
 
 
@@ -53,9 +42,6 @@ def set_current_group(group_chat_id: int):
     previous_group = int(_current_group_id.get())
     if previous_group and previous_group != next_group:
         _POLL_CONFIGS_CACHE.pop(previous_group, None)
-        for (group_id, poll_id) in list(_ACTIVE_POLL_CACHE):
-            if group_id == previous_group:
-                _ACTIVE_POLL_CACHE.pop((group_id, poll_id), None)
     return _current_group_id.set(next_group)
 
 
@@ -239,190 +225,6 @@ def _poll_cache_for_group(group_chat_id: int | None = None) -> dict[str, dict]:
         _POLL_CONFIGS_CACHE[group_id] = {}
     return _POLL_CONFIGS_CACHE[group_id]
 
-DEFAULT_POLL_CONFIGS: list[dict] = [
-    {
-        "id": "morning_dhikr",
-        "title": "Morning Adhkar",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
-        "weight": 8,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "sunrise",
-        "prayer_offset_minutes": 0,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "fazr_jamaat",
-        "title": "Fazr Jamaat",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed Jamaat"],
-        "weight": 20,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "sunrise",
-        "prayer_offset_minutes": 0,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "ishraq_salat",
-        "title": "Ishraq Salat",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 7,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "sunrise",
-        "prayer_offset_minutes": 0,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "quran",
-        "title": "Read 2 ayah of the Quran",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 7,
-        "time_type": "fixed",
-        "fixed_time": "10:00",
-        "prayer_name": None,
-        "prayer_offset_minutes": 0,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "istighfar_100x",
-        "title": "Istighfar 100x",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 12,
-        "time_type": "fixed",
-        "fixed_time": "12:00",
-        "prayer_name": None,
-        "prayer_offset_minutes": 0,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "salawat_on_rasulullah",
-        "title": "Salawat on Rasulullah",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
-        "weight": 9,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "maghrib",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "evening_dhikr",
-        "title": "Evening Adhkar",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
-        "weight": 8,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "maghrib",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "tahajjud",
-        "title": "Tahajjud Salat",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "InshaAllah, next time"],
-        "weight": 15,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "fajr",
-        "prayer_offset_minutes": -30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "sawm",
-        "title": "Sawm",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, fasting", "InshaAllah, next time"],
-        "weight": 8,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "fajr",
-        "prayer_offset_minutes": -30,
-        "days_of_week": [0, 3],
-        "is_active": True,
-    },
-    {
-        "id": "surah_kahf",
-        "title": "Surah Kahf",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Incomplete/Missed"],
-        "weight": 12,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "dhuhr",
-        "prayer_offset_minutes": 0,
-        "days_of_week": [4],
-        "is_active": True,
-    },
-    {
-        "id": "nightly_al_mulk",
-        "title": "Surat Al-Mulk",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 5,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "isha",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "nightly_as_sajdah",
-        "title": "Surat As-Sajdah",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 5,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "isha",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "nightly_al_baqarah_last_2",
-        "title": "Surat Al-Baqarah (Last 2 ayats)",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 10,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "isha",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "nightly_33_tasbeeh",
-        "title": "33x SubhanAllah, 33x Alhamdulillah, 34x AllahuAkbar",
-        "poll_type": "amal_poll",
-        "poll_options": ["Alhamdulillah, done", "Missed"],
-        "weight": 3,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "isha",
-        "prayer_offset_minutes": 30,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-]
 
 DEFAULT_BINARY_OPTIONS = ["Alhamdulillah, done", "Incomplete/Missed"]
 
@@ -431,28 +233,8 @@ def _binary_options(options: object) -> list[str]:
     values = [str(option).strip() for option in (options or []) if str(option).strip()]
     return values[:2] if len(values) >= 2 else list(DEFAULT_BINARY_OPTIONS)
 
-def seed_initial_poll_configs():
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE
-    group_id = current_group_id()
-    _POLL_CONFIGS_CACHE[group_id] = {}
-
-    try:
-        _sb().table("poll_configs").select("id").eq("group_chat_id", group_id).limit(1).execute()
-        _SUPABASE_POLL_CONFIGS_AVAILABLE = True
-
-        rows = (_sb().table("poll_configs").select("*").eq("group_chat_id", group_id).execute().data or [])
-        _POLL_CONFIGS_CACHE[group_id] = {row["id"]: row for row in rows}
-        log.info("Supabase poll_configs synchronized (%d items).", len(_POLL_CONFIGS_CACHE[group_id]))
-    except Exception as exc:
-        _POLL_CONFIGS_CACHE[group_id] = {}
-        _SUPABASE_POLL_CONFIGS_AVAILABLE = False
-        log.info(
-            "Supabase table 'poll_configs' is unavailable; no poll configurations loaded: %s",
-            exc,
-        )
 
 def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = None) -> list[dict]:
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
     cache = _poll_cache_for_group(group_id)
 
@@ -483,7 +265,6 @@ def get_poll_config(poll_id: str, group_chat_id: int | None = None) -> Optional[
     return cache.get(poll_id)
 
 def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
     poll_id = data.get("id")
     if not poll_id:
@@ -523,7 +304,6 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
     return clean_data
 
 def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
-    global _SUPABASE_POLL_CONFIGS_AVAILABLE
     group_id = _group_id(group_chat_id)
     cache = _poll_cache_for_group(group_id)
     if not _SUPABASE_POLL_CONFIGS_AVAILABLE:
@@ -576,12 +356,6 @@ def get_weekly_max(practice_key: str) -> int:
 #  ACTIVE POLLS
 # ============================================================
 
-# In-process cache, mirrors the SQLite-era one. Writes go to Supabase
-# immediately; the cache is purely an optimization for the hot path
-# (poll answer -> lookup practice).
-_ACTIVE_POLL_CACHE: dict[tuple[int, str], str] = {}
-
-
 def save_active_poll(
     poll_id: str,
     practice_key: str,
@@ -590,20 +364,11 @@ def save_active_poll(
 ):
     """Record a sent poll. message_id lets the bot close it after a restart."""
     group_id = _group_id(group_chat_id)
-    _ACTIVE_POLL_CACHE[(group_id, poll_id)] = practice_key
     payload = {"poll_id": poll_id, "practice_key": practice_key, "group_chat_id": group_id}
     if message_id is not None:
         payload["message_id"] = int(message_id)
     try:
-        try:
-            _sb().table("active_polls").upsert(payload, on_conflict="group_chat_id,poll_id").execute()
-        except Exception as exc:
-            if "message_id" not in payload or "message_id" not in str(exc):
-                raise
-            # Column not migrated yet: still track the poll so answers count.
-            log.warning("active_polls.message_id is missing; run the migration in supabase_schema.sql.")
-            payload.pop("message_id")
-            _sb().table("active_polls").upsert(payload, on_conflict="group_chat_id,poll_id").execute()
+        _sb().table("active_polls").upsert(payload, on_conflict="group_chat_id,poll_id").execute()
         log.info("Registered active poll %s for group %s (%s).", poll_id, group_id, practice_key)
     except Exception as exc:
         log.error("Could not save active poll %s for group %s: %s", poll_id, group_id, exc)
@@ -618,35 +383,8 @@ def list_active_polls() -> list[dict]:
             .order("group_chat_id").order("poll_id")
         ))
     except Exception as exc:
-        log.warning("Could not list active polls (is active_polls.message_id migrated?): %s", exc)
+        log.warning("Could not list active polls: %s", exc)
         return []
-
-
-def get_poll_practice(poll_id: str, group_chat_id: int | None = None) -> Optional[str]:
-    if (_group_id(group_chat_id), poll_id) in _ACTIVE_POLL_CACHE:
-        return _ACTIVE_POLL_CACHE[(_group_id(group_chat_id), poll_id)]
-    try:
-        res = (
-            _sb()
-            .table("active_polls")
-            .select("practice_key")
-            .eq("poll_id", poll_id)
-            .eq("group_chat_id", _group_id(group_chat_id))
-            .limit(1)
-            .execute()
-        )
-        if res.data:
-            key = res.data[0]["practice_key"]
-            _ACTIVE_POLL_CACHE[(_group_id(group_chat_id), poll_id)] = key
-            return key
-    except Exception as exc:
-        log.warning("Could not read active poll %s: %s", poll_id, exc)
-    return None
-
-
-def get_poll_group(poll_id: str) -> int:
-    row = get_active_poll(poll_id)
-    return int(row["group_chat_id"]) if row else 0
 
 
 def get_active_poll(poll_id: str) -> Optional[dict]:
@@ -668,7 +406,6 @@ def get_active_poll(poll_id: str) -> Optional[dict]:
 
 
 def delete_active_poll(poll_id: str, group_chat_id: int | None = None):
-    _ACTIVE_POLL_CACHE.pop((_group_id(group_chat_id), poll_id), None)
     try:
         _sb().table("active_polls").delete().eq("poll_id", poll_id).eq("group_chat_id", _group_id(group_chat_id)).execute()
     except Exception as exc:
@@ -838,40 +575,6 @@ def get_daily_summary(
 #  STREAKS
 # ============================================================
 
-def get_streak(user_id: int, practice: str, group_chat_id: int | None = None) -> int:
-    try:
-        res = (
-            _sb()
-            .table("streaks")
-            .select("current_streak")
-            .eq("user_id", user_id)
-            .eq("practice", practice)
-            .eq("group_chat_id", _group_id(group_chat_id))
-            .limit(1)
-            .execute()
-        )
-        if res.data:
-            return int(res.data[0]["current_streak"])
-    except Exception as exc:
-        log.warning("Could not read streak: %s", exc)
-    return 0
-
-
-def get_all_streaks(user_id: int, group_chat_id: int | None = None) -> dict[str, int]:
-    try:
-        res = (
-            _sb()
-            .table("streaks")
-            .select("practice,current_streak")
-            .eq("user_id", user_id)
-            .eq("group_chat_id", _group_id(group_chat_id))
-            .execute()
-        )
-        return {r["practice"]: int(r["current_streak"]) for r in (res.data or [])}
-    except Exception as exc:
-        log.warning("Could not read all streaks: %s", exc)
-        return {}
-
 
 def update_streak_for_response(
     user_id: int,
@@ -995,26 +698,3 @@ def get_daily_streaks(
     for r in rows:
         result.setdefault(r["user_id"], {})[r["practice"]] = int(r["current_streak"])
     return result
-
-
-# ============================================================
-#  WEEKLY MAX (unchanged from SQLite version)
-# ============================================================
-
-WEEKLY_MAX: dict[str, int] = {
-    "morning_dhikr": 7,
-    "fazr_jamaat": 7,
-    "ishraq_salat": 7,
-    "quran_page": 7,
-    "salatud_duha": 7,
-    "evening_dhikr": 7,
-    "salawat_on_rasulullah": 7,
-    "tahajjud": 7,
-    "istighfar_100x": 7,
-    "sawm": 2,
-    "surah_kahf": 1,
-    "nightly_al_mulk": 7,
-    "nightly_as_sajdah": 7,
-    "nightly_al_baqarah_last_2": 7,
-    "nightly_33_tasbeeh": 7,
-}

@@ -1,6 +1,6 @@
 """
-Registers all recurring JobQueue jobs: practice check-in polls, daily
-and weekly reports, and the nightly amal batch.
+Registers the recurring JobQueue jobs: the per-minute schedule tick
+(amal polls and daily/weekly reports) and the prayer-time hadith tick.
 """
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ import datetime
 
 from telegram.ext import Application
 
-from config import BD_TZ, log
+from config import log
 from jobs import (
-    send_checkin_job,
     prayer_schedule_job,
     prayer_hadith_poll_job,
 )

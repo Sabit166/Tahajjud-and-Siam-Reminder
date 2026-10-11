@@ -15,7 +15,6 @@ from telegram.ext import ContextTypes
 
 from config import BD_TZ, log
 from db import (
-    get_poll_practice,
     save_response,
     update_streak_for_response,
     set_current_group,
@@ -57,7 +56,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = int(poll["group_chat_id"])
     set_current_group(chat_id)
 
-    practice_key = poll.get("practice_key") or get_poll_practice(poll_id, chat_id)
+    practice_key = poll.get("practice_key")
 
     if practice_key:
         from db import get_practice_info, get_practice_weight

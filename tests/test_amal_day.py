@@ -215,13 +215,6 @@ def test_sent_poll_records_its_message_id(fake_sb, bot):
     assert row["message_id"] == 2 and row["practice_key"] == "quran"
 
 
-def test_poll_is_still_tracked_before_the_column_is_migrated(fake_sb):
-    fake_sb.missing_columns["active_polls"] = {"message_id"}
-    db.save_active_poll("p1", "quran", GROUP_A, message_id=55)
-    assert fake_sb.rows("active_polls") == [
-        {"poll_id": "p1", "practice_key": "quran", "group_chat_id": GROUP_A}
-    ]
-
 
 class StopRecordingBot:
     def __init__(self):

@@ -6,4 +6,3 @@ env/
 ssh*
 .venv/
 *.DS_Store
-dhikr_records.db

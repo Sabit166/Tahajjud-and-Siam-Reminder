@@ -81,7 +81,7 @@ def main():
 
     setup_scheduler(app)
 
-    async def _post_init(ctx):
+    async def _post_init(_context):
         set_bot_instance(app.bot, app.job_queue)
         # Close polls whose amal day ended while the bot was down and re-arm
         # the rest; must run before the cleanup removes their records.

@@ -586,17 +586,7 @@ body {
   border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
-.badge-amber {
-  background: rgba(245, 158, 11, 0.18);
-  color: var(--amber-400);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-}
 
-.badge-purple {
-  background: rgba(168, 85, 247, 0.18);
-  color: #c084fc;
-  border: 1px solid rgba(168, 85, 247, 0.35);
-}
 
 /* ============================================================
    FLOATING ACTION BUTTON (MOBILE)
@@ -1014,18 +1004,6 @@ body {
   flex: 1;
 }
 
-.option-remove-btn {
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--red-500);
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
 
 /* Toggle Switch */
 .toggle-row {
@@ -1106,10 +1084,6 @@ input:checked + .slider:before {
   flex: 1;
 }
 
-.btn-primary {
-  background: var(--emerald-500);
-  color: #062b1a;
-}
 
 .btn-emerald {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);

@@ -154,7 +154,6 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `web_server.py` | Dashboard REST API and Mini App authentication |
 | `static/` | Dashboard frontend (`index.html`, `app.js`, `styles.css`) |
 | `prayer_times.py` / `hadith.py` | Aladhan prayer times (Dhaka) and HadithAPI client |
-| `practices.py` | Legacy practice constants |
 | `supabase_schema.sql` | Database schema, including the multi-group migration |
 | `tests/` | Automated tests (no network needed) |
 

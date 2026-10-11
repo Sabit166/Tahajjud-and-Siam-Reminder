@@ -6,26 +6,16 @@ callbacks.
 
 from __future__ import annotations
 
-from typing import cast
-
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from config import log
 
 from messaging import (
-    send_checkin,
     fetch_today_timings,
     _prayer_schedule_tick,
     _prayer_hadith_poll_tick,
 )
-
-
-async def send_checkin_job(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    if job is None:
-        return
-    await send_checkin(context.bot, cast(str, job.data), context.job_queue)
 
 
 def bot_removed_from_chat(exc: BaseException) -> bool:

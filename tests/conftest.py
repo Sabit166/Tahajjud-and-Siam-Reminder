@@ -104,10 +104,6 @@ class _Query:
         if self.store.fail_tables.get(self.table) in (self.op, "*"):
             raise RuntimeError(f"simulated failure on {self.table}.{self.op}")
         rows = self.store.tables.setdefault(self.table, [])
-        missing = self.store.missing_columns.get(self.table, set())
-        if self.op in ("insert", "upsert") and missing & set(self.payload or {}):
-            col = sorted(missing & set(self.payload))[0]
-            raise RuntimeError(f"Could not find the '{col}' column of '{self.table}' in the schema cache")
         if self.op == "select":
             self.store.selects.append(self.table)
             out = [dict(r) for r in rows if self._match(r)]
@@ -152,7 +148,6 @@ class FakeSupabase:
         self.tables: dict[str, list[dict]] = {}
         self.fail_tables: dict[str, str] = {}
         self.max_rows = 1000          # Supabase's default per-request cap
-        self.missing_columns: dict[str, set[str]] = {}  # simulate unmigrated columns
         self.selects: list[str] = []  # table name of every SELECT issued
 
     def table(self, name):
@@ -219,11 +214,9 @@ def fake_sb(monkeypatch):
     monkeypatch.setattr(db, "_sb", lambda: fake)
     monkeypatch.setattr(db, "_SUPABASE_POLL_CONFIGS_AVAILABLE", None)
     db._POLL_CONFIGS_CACHE.clear()
-    db._ACTIVE_POLL_CACHE.clear()
     db._current_group_id.set(0)
     yield fake
     db._POLL_CONFIGS_CACHE.clear()
-    db._ACTIVE_POLL_CACHE.clear()
     db._current_group_id.set(0)
 
 

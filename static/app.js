@@ -56,7 +56,6 @@
 
   // Modal Elements
   const pollModal = document.getElementById('poll-modal');
-  const modalSheet = document.getElementById('modal-sheet');
   const modalTitle = document.getElementById('modal-title');
   const modalCloseBtn = document.getElementById('modal-close-btn');
   const modalCancelBtn = document.getElementById('modal-cancel-btn');
@@ -64,7 +63,6 @@
 
   const formPollId = document.getElementById('form-poll-id');
   const formTitle = document.getElementById('form-title');
-  const formType = document.getElementById('form-type');
 
   const formTimeMode = document.getElementById('form-time-mode');
   const formTimeModeSegments = document.getElementById('form-time-mode-segments');
@@ -80,11 +78,9 @@
   const formFixedTime = document.getElementById('form-fixed-time');
 
   const weekdaySelector = document.getElementById('weekday-selector');
-  const weightGroup = document.getElementById('weight-group');
   const formWeight = document.getElementById('form-weight');
   const weightDisplay = document.getElementById('weight-display');
 
-  const optionsGroup = document.getElementById('options-group');
   const optionsListContainer = document.getElementById('options-list-container');
   const addOptionBtn = document.getElementById('add-option-btn');
   const formIsActive = document.getElementById('form-is-active');
@@ -280,12 +276,10 @@
 
   function updateFilterCounts() {
     const total = allPolls.length;
-    const amals = allPolls.filter((p) => p.poll_type === 'amal_poll').length;
     const active = allPolls.filter((p) => p.is_active).length;
     const paused = total - active;
 
     document.getElementById('count-all').textContent = total;
-    document.getElementById('count-amal').textContent = amals;
     document.getElementById('count-active').textContent = active;
     document.getElementById('count-paused').textContent = paused;
   }
@@ -296,9 +290,7 @@
     let filtered = allPolls.slice();
 
     // Filter chip
-    if (currentFilter === 'amal_poll') {
-      filtered = filtered.filter((p) => p.poll_type === 'amal_poll');
-    } else if (currentFilter === 'active') {
+    if (currentFilter === 'active') {
       filtered = filtered.filter((p) => p.is_active);
     } else if (currentFilter === 'paused') {
       filtered = filtered.filter((p) => !p.is_active);
@@ -387,11 +379,7 @@
         <div class="weekdays-mini-strip" title="Active on: ${activeDays.map((d) => WEEKDAYS[d]).join(', ')}">
           ${weekdaysHtml}
         </div>
-        ${
-          poll.poll_type === 'amal_poll'
-            ? `<div class="marks-badge">⭐ ${poll.weight || 1} Marks</div>`
-            : ''
-        }
+        <div class="marks-badge">⭐ ${poll.weight || 1} Marks</div>
       </div>
 
       ${optionsHtml ? `<div class="card-options-strip">${optionsHtml}</div>` : ''}
@@ -465,9 +453,6 @@
     modalTitle.textContent = 'Add New Poll';
     formTitle.value = '';
 
-    // Only amal polls are configurable
-    formType.value = 'amal_poll';
-
     // Default: Prayer relative
     setSegmentValue(formTimeModeSegments, 'prayer_relative');
     formTimeMode.value = 'prayer_relative';
@@ -488,11 +473,9 @@
     // Weight default
     formWeight.value = '7';
     weightDisplay.textContent = '⭐ 7 marks';
-    weightGroup.style.display = 'block';
 
     // Options default
     renderOptionsInputs(['Alhamdulillah, done', 'Incomplete/Missed']);
-    optionsGroup.style.display = 'block';
 
     formIsActive.checked = true;
 
@@ -505,10 +488,6 @@
     formPollId.value = poll.id;
     modalTitle.textContent = 'Edit Poll Schedule';
     formTitle.value = poll.title;
-
-    // Type: only amal polls are configurable
-    formType.value = 'amal_poll';
-    toggleTypeDependentSections(formType.value);
 
     // Timing Mode
     const timeMode = poll.time_type || 'prayer_relative';
@@ -565,15 +544,6 @@
     if (e.target === pollModal) closeModal();
   });
 
-  function toggleTypeDependentSections(type) {
-    if (type === 'amal_poll') {
-      weightGroup.style.display = 'block';
-      optionsGroup.style.display = 'block';
-    } else {
-      weightGroup.style.display = 'none';
-      optionsGroup.style.display = 'none';
-    }
-  }
 
   // Timing Mode Segments Switch
   formTimeModeSegments.addEventListener('click', (e) => {
@@ -704,7 +674,6 @@
 
     const pollId = formPollId.value.trim();
     const title = formTitle.value.trim();
-    const pollType = formType.value;
     const timeType = formTimeMode.value;
 
     if (!title) {
@@ -724,21 +693,18 @@
 
     // Collect options
     const options = [];
-    if (pollType === 'amal_poll') {
-      optionsListContainer.querySelectorAll('.form-option-input').forEach((inp) => {
-        const val = inp.value.trim();
-        if (val) options.push(val);
-      });
-      if (options.length !== 2) {
-        showToast('Polls require exactly 2 answer options', 'error');
-        return;
-      }
+    optionsListContainer.querySelectorAll('.form-option-input').forEach((inp) => {
+      const val = inp.value.trim();
+      if (val) options.push(val);
+    });
+    if (options.length !== 2) {
+      showToast('Polls require exactly 2 answer options', 'error');
+      return;
     }
 
     // Build payload
     const payload = {
       title,
-      poll_type: pollType,
       poll_options: options,
       weight: parseInt(formWeight.value, 10) || 1,
       time_type: timeType,

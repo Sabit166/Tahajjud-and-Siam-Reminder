@@ -24,16 +24,6 @@ class PrayerTimes:
     maghrib: _dt.time
     isha: _dt.time
 
-    def as_dict(self) -> dict[str, _dt.time]:
-        return {
-            "sunrise": self.sunrise,
-            "fajr": self.fajr,
-            "dhuhr": self.dhuhr,
-            "asr": self.asr,
-            "maghrib": self.maghrib,
-            "isha": self.isha,
-        }
-
 
 async def fetch_prayer_times(
     city: str = DEFAULT_CITY,

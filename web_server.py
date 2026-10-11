@@ -9,7 +9,6 @@ import datetime as _dt
 import hashlib
 import hmac
 import json
-import logging
 import time
 import urllib.parse
 from pathlib import Path
@@ -28,11 +27,10 @@ from db import (
     get_poll_config,
     upsert_poll_config,
     delete_poll_config,
-    get_practice_info,
     get_session, issue_session, consume_setup_token, set_current_group, clear_current_group,
     register_group,
 )
-from prayer_times import fetch_prayer_times, dt_with_tz
+from prayer_times import fetch_prayer_times
 
 # Static directory
 STATIC_DIR = Path(__file__).parent / "static"
@@ -124,8 +122,6 @@ async def require_group(authorization: Optional[str] = Header(None)) -> dict:
         detail="Invalid or expired group session",
     )
 
-
-verify_admin = require_group
 
 
 # ------------------------------------------------------------
@@ -270,7 +266,7 @@ async def list_polls(_=Depends(require_group)):
 
 
 @app.post("/api/polls")
-async def create_poll(payload: PollConfigPayload, _=Depends(verify_admin)):
+async def create_poll(payload: PollConfigPayload, _=Depends(require_group)):
     """Create a new poll or scheduled item."""
     data = payload.model_dump()
     if len(data["poll_options"]) != 2:
@@ -302,7 +298,7 @@ async def create_poll(payload: PollConfigPayload, _=Depends(verify_admin)):
 
 
 @app.put("/api/polls/{poll_id}")
-async def update_poll(poll_id: str, payload: PollConfigPayload, _=Depends(verify_admin)):
+async def update_poll(poll_id: str, payload: PollConfigPayload, _=Depends(require_group)):
     """Update an existing poll or scheduled item."""
     existing = get_poll_config(poll_id)
     if not existing:
@@ -318,7 +314,7 @@ async def update_poll(poll_id: str, payload: PollConfigPayload, _=Depends(verify
 
 
 @app.delete("/api/polls/{poll_id}")
-async def remove_poll(poll_id: str, _=Depends(verify_admin)):
+async def remove_poll(poll_id: str, _=Depends(require_group)):
     """Delete a poll or scheduled item."""
     success = delete_poll_config(poll_id)
     if not success:
@@ -328,7 +324,7 @@ async def remove_poll(poll_id: str, _=Depends(verify_admin)):
 
 
 @app.post("/api/polls/{poll_id}/toggle")
-async def toggle_poll_active(poll_id: str, _=Depends(verify_admin)):
+async def toggle_poll_active(poll_id: str, _=Depends(require_group)):
     """Quickly toggle the active state of a poll."""
     conf = get_poll_config(poll_id)
     if not conf:
@@ -340,7 +336,7 @@ async def toggle_poll_active(poll_id: str, _=Depends(verify_admin)):
 
 
 @app.post("/api/polls/{poll_id}/trigger")
-async def trigger_poll_now(poll_id: str, _=Depends(verify_admin)):
+async def trigger_poll_now(poll_id: str, _=Depends(require_group)):
     """Immediately send one of the group's amal polls to its Telegram group."""
     from messaging import send_checkin
 

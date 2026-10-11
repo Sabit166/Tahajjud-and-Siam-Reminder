@@ -12,17 +12,10 @@ from telegram import Bot
 import time as _time
 
 from config import BD_TZ, log
-from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX, current_group_id
+from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, current_group_id
 from scheduling import schedule_poll_close
 from hadith import fetch_hadith, format_hadith_message
-from prayer_times import (
-    ALADHAN_BASE,
-    DEFAULT_CITY,
-    DEFAULT_COUNTRY,
-    DEFAULT_METHOD,
-    fetch_prayer_times,
-    dt_with_tz,
-)
+from prayer_times import fetch_prayer_times, dt_with_tz
 
 # ============================================================
 #  MESSAGE SENDERS & POLL CLOSING
@@ -234,7 +227,6 @@ def _chunk_blocks(title: str, header_separator: str, blocks: list[str]) -> list[
     chunks: list[list[str]] = []
     current: list[str] = []
     current_len = 0
-    n = len(blocks)
     for blk in blocks:
         if len(blk) > TG_MAX_LEN:
             log.warning("Block of %d chars exceeds Telegram limit; sending as-is.", len(blk))
