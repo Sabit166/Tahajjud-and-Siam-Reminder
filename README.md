@@ -27,13 +27,13 @@ One bot serves many groups. Each group has its own polls, answers, streaks, and 
 1. Open the group in Telegram, go to **Add members**, and add the bot.
 2. Make sure members can see and vote on polls. The bot doesn't need admin rights.
 
-The bot registers the group automatically when it's added.
+The bot registers the group automatically when it's added, and **immediately posts the setup message** with the **Open private chat with bot** button. Any admin can continue from step 2 below by tapping it. When someone taps it and presses Start, the bot checks that they are an administrator of the group; anyone else is refused.
 
 ### 2. Open your group's dashboard
 
 Only **Telegram administrators of the group** can do this.
 
-1. In the group, type `/` and choose **`/setup`**, or just send `/setup`. The command shows up in the `/` menu for admins only.
+1. In the group, type `/` and choose **`/setup`**, or just send `/setup`. The command shows up in the `/` menu for admins only. (Right after adding the bot you can skip this and use the button from its welcome message instead.)
 2. The bot replies with **💬 Open private chat with bot**. Tap it.
 3. In the private chat, tap **Start**. The bot replies *"Your group setup link is verified."*
 4. Tap **📱 Open Poll Dashboard**. The dashboard for **the group where you sent `/setup`** opens inside Telegram.
@@ -46,7 +46,7 @@ Good to know:
 |---|---|
 | Each dashboard button works **once**, within **10 minutes** | An older "Open Poll Dashboard" button shows *"Invalid, expired, or unauthorized setup token"*. Send `/setup` again. |
 | A dashboard session lasts **60 minutes** | After that the setup screen appears. Send `/setup` again. |
-| The link only works for the admin who sent `/setup` | Forwarding it to someone else won't give them access. |
+| The `/setup` link only works for the admin who sent it; the welcome-message link works for any admin of the group | Non-admins are refused, so forwarding a link doesn't give anyone access. |
 | It must be opened inside Telegram | Pasting the dashboard URL into a browser won't log you in. |
 
 `/admin`, `/dashboard` and `/polls` do the same thing as `/setup`.

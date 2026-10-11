@@ -107,9 +107,6 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Issue a group-scoped setup link for the administrator."""
-    from config import WEB_APP_URL, WEB_PORT
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
     user = update.effective_user
     chat = update.effective_chat
     if not user or not chat:
@@ -123,40 +120,56 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(chat.id, "I could not verify your administrator status.")
         return
     register_group(chat.id, chat.title, getattr(chat, "username", None))
+    # The link is bound to this admin: only they can redeem it.
     token = issue_setup_token(chat.id, user.id)
+    await _send_setup_prompt(context.bot, chat.id, f"setup_{token}")
 
-    text = (
-        "🌿 *Dhikr & Tahajjud Bot — Poll & Schedule Manager*\n\n"
-        "Manage all present and new polls, fixed or prayer-relative times, "
-        "and dispatch manual check-ins right from your mobile phone."
-    )
 
+# Deep-link payload for the button posted when the bot joins a group. It
+# is not bound to a user; handle_start checks that whoever opens it is an
+# administrator of that group before issuing a personal setup token.
+GROUP_SETUP_PREFIX = "admin_"
+
+SETUP_PROMPT_TEXT = (
+    "🌿 *Dhikr & Tahajjud Bot — Poll & Schedule Manager*\n\n"
+    "Manage all present and new polls, fixed or prayer-relative times, "
+    "and dispatch manual check-ins right from your mobile phone."
+)
+
+
+async def _send_setup_prompt(bot, chat_id: int, start_payload: str, intro: str = "") -> None:
+    """Post the dashboard prompt with a button into the bot's private chat."""
+    from config import WEB_APP_URL, WEB_PORT
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    text = intro + SETUP_PROMPT_TEXT
     if not WEB_APP_URL:
         text += f"\n\n🔗 Dashboard is running on port `{WEB_PORT}`.\nSet `WEB_APP_URL` in `.env` to enable one-tap Telegram Mini App button!"
-        await context.bot.send_message(chat.id, text=text, parse_mode="Markdown")
+        await bot.send_message(chat_id, text=text, parse_mode="Markdown")
         return
 
-    bot = await context.bot.get_me()
-    if not bot.username:
-        await context.bot.send_message(chat.id, "I could not determine my Telegram username. Please contact the bot administrator.")
+    me = await bot.get_me()
+    if not me.username:
+        await bot.send_message(chat_id, "I could not determine my Telegram username. Please contact the bot administrator.")
         return
 
-    bot_username = bot.username.lstrip("@").strip()
+    bot_username = me.username.lstrip("@").strip()
     private_link = (
         f"https://t.me/{quote(bot_username, safe='')}?"
-        f"start={quote(f'setup_{token}', safe='')}"
+        f"start={quote(start_payload, safe='')}"
     )
     reply_markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("💬 Open private chat with bot", url=private_link)
     ]])
     text += (
-        "\n\nTelegram only allows the dashboard Mini App button in a private chat. "
+        "\n\nOnly group administrators can open the dashboard. "
+        "Telegram only allows the dashboard Mini App button in a private chat. "
         "Tap the button below, then press Start in the private chat."
     )
 
     try:
-        await context.bot.send_message(
-            chat_id=chat.id,
+        await bot.send_message(
+            chat_id=chat_id,
             text=text,
             parse_mode="Markdown",
             reply_markup=reply_markup,
@@ -165,8 +178,8 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         if "button_type_invalid" not in str(exc).lower():
             raise
         log.warning("Telegram rejected the setup URL button; sending a plain link instead.")
-        await context.bot.send_message(
-            chat_id=chat.id,
+        await bot.send_message(
+            chat_id=chat_id,
             text=f"{text}\n\nOpen this setup link:\n{private_link}",
             parse_mode="Markdown",
         )
@@ -182,9 +195,14 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not chat or not user or chat.type != "private":
         return
 
+    payload = context.args[0] if context.args else ""
     token = ""
-    if context.args and context.args[0].startswith("setup_"):
-        token = context.args[0][len("setup_"):]
+    if payload.startswith("setup_"):
+        token = payload[len("setup_"):]
+    elif payload.startswith(GROUP_SETUP_PREFIX):
+        token = await _token_for_group_admin(context.bot, chat.id, user.id, payload[len(GROUP_SETUP_PREFIX):])
+        if token is None:
+            return  # the user has been told why
 
     setup = get_setup_token(token, user.id) if token else None
     if not setup:
@@ -212,13 +230,58 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _token_for_group_admin(bot, private_chat_id: int, user_id: int, raw_group_id: str) -> str | None:
+    """Issue a personal setup token if ``user_id`` administers the group.
+
+    Used by the button posted when the bot joins a group: anyone can tap
+    it, so the administrator check happens here. Returns None (after
+    telling the user why) when access is refused.
+    """
+    from db import list_groups
+    try:
+        group_id = int(raw_group_id)
+    except ValueError:
+        group_id = 0
+    group = next((g for g in list_groups() if int(g["chat_id"]) == group_id), None) if group_id else None
+    if not group:
+        await bot.send_message(
+            private_chat_id,
+            "This setup link is not valid. Please send /setup inside your Telegram group.",
+        )
+        return None
+    title = group.get("title") or "this group"
+    try:
+        member = await bot.get_chat_member(group_id, user_id)
+        is_admin = member.status in ("administrator", "creator")
+    except Exception as exc:
+        log.info("Admin check for user %s in group %s failed: %s", user_id, group_id, exc)
+        is_admin = False
+    if not is_admin:
+        await bot.send_message(
+            private_chat_id,
+            f"Only administrators of {title} can open its dashboard.",
+        )
+        return None
+    return issue_setup_token(group_id, user_id)
+
+
 async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     change = update.my_chat_member
     if not change or not change.chat or change.chat.type not in ("group", "supergroup"):
         return
+    old_status = getattr(change.old_chat_member, "status", "")
     new_status = getattr(change.new_chat_member, "status", "")
     if new_status in ("member", "administrator"):
         register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
+        # Newly added (not e.g. promoted to admin): post the setup prompt
+        # right away, as /setup would. Only administrators get through.
+        if old_status in ("left", "kicked", ""):
+            await _send_setup_prompt(
+                context.bot,
+                change.chat.id,
+                f"{GROUP_SETUP_PREFIX}{change.chat.id}",
+                intro="Assalamu Alaikum! Thank you for adding me to this group.\n\n",
+            )
     elif new_status in ("left", "kicked"):
         register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
         from db import _sb
