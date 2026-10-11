@@ -271,6 +271,7 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
         return
     old_status = getattr(change.old_chat_member, "status", "")
     new_status = getattr(change.new_chat_member, "status", "")
+    log.info("Bot status in group %s (%s): %s -> %s", change.chat.id, change.chat.title, old_status, new_status)
     if new_status in ("member", "administrator"):
         register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
         # Newly added (not e.g. promoted to admin): post the setup prompt
@@ -283,12 +284,9 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
                 intro="Assalamu Alaikum! Thank you for adding me to this group.\n\n",
             )
     elif new_status in ("left", "kicked"):
+        from db import deactivate_group
         register_group(change.chat.id, change.chat.title, getattr(change.chat, "username", None))
-        from db import _sb
-        try:
-            _sb().table("groups").update({"is_active": False}).eq("chat_id", change.chat.id).execute()
-        except Exception:
-            pass
+        deactivate_group(change.chat.id, f"bot status changed to {new_status}")
 
 async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log handler/job failures with enough context to trace them."""

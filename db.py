@@ -114,13 +114,30 @@ def init_db():
 
 
 def register_group(chat_id: int, title: str | None = None, username: str | None = None) -> dict:
-    """Register/update a Telegram group without creating default poll configs."""
-    payload = {"chat_id": int(chat_id), "title": title, "username": username, "is_active": True}
+    """Register/update a Telegram group without creating default poll configs.
+
+    Title and username are only written when given, so callers that only
+    know the chat id (e.g. dashboard login) don't erase the stored name.
+    """
+    payload: dict = {"chat_id": int(chat_id), "is_active": True}
+    if title is not None:
+        payload["title"] = title
+    if username is not None:
+        payload["username"] = username
     try:
         return (_sb().table("groups").upsert(payload, on_conflict="chat_id").execute().data or [payload])[0]
     except Exception as exc:
         log.warning("Could not register group %s: %s", chat_id, exc)
         return payload
+
+
+def deactivate_group(chat_id: int, reason: str) -> None:
+    """Stop scheduling for a group the bot can no longer post to."""
+    try:
+        _sb().table("groups").update({"is_active": False}).eq("chat_id", int(chat_id)).execute()
+        log.warning("Deactivated group %s: %s", chat_id, reason)
+    except Exception as exc:
+        log.error("Could not deactivate group %s (%s): %s", chat_id, reason, exc)
 
 
 def list_groups() -> list[dict]:
