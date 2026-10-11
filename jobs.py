@@ -36,6 +36,37 @@ def bot_removed_from_chat(exc: BaseException) -> bool:
     return isinstance(exc, BadRequest) and "chat not found" in str(exc).lower()
 
 
+async def refresh_groups(bot) -> None:
+    """At startup, sync each active group with Telegram.
+
+    Restores titles and deactivates groups the bot is no longer in (their
+    leave update may have been missed while the bot was down).
+    """
+    from telegram.error import ChatMigrated
+    from db import deactivate_group, list_groups, register_group
+
+    refreshed = removed = 0
+    for group in list_groups():
+        chat_id = int(group["chat_id"])
+        try:
+            chat = await bot.get_chat(chat_id)
+        except ChatMigrated as exc:
+            # A basic group upgraded to a supergroup gets a new id; its data
+            # stays under the old id and needs a manual move.
+            log.warning("Group %s was upgraded to supergroup %s.", chat_id, exc.new_chat_id)
+            continue
+        except Exception as exc:
+            if bot_removed_from_chat(exc):
+                deactivate_group(chat_id, f"{type(exc).__name__}: {exc}")
+                removed += 1
+            else:
+                log.warning("Could not refresh group %s: %s", chat_id, exc)
+            continue
+        register_group(chat_id, chat.title, getattr(chat, "username", None))
+        refreshed += 1
+    log.info("Groups refreshed: %d active, %d deactivated.", refreshed, removed)
+
+
 def _handle_group_failure(kind: str, chat_id: int, exc: Exception) -> None:
     if bot_removed_from_chat(exc):
         # The leave update can be missed (e.g. during a restart); stop

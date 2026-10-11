@@ -90,6 +90,8 @@ def main():
         # Polls stay open up to ~24h (until their amal day ends); keep a margin.
         cleanup_old_active_polls(48)
         await register_bot_commands(app.bot)
+        from jobs import refresh_groups
+        await refresh_groups(app.bot)
 
         # Start FastAPI Web Server concurrently in the same asyncio event loop
         server_config = uvicorn.Config(

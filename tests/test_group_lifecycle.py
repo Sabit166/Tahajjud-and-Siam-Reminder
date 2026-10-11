@@ -145,3 +145,34 @@ def test_leave_update_deactivates_and_keeps_title(fake_sb, bot):
     g = group(fake_sb, GROUP_B)
     assert (g["is_active"], g["title"]) == (False, "Test group")
     assert bot.sent_messages == []
+
+
+# ------------------------------------------------------------
+#  Startup refresh
+# ------------------------------------------------------------
+
+def test_startup_refresh_restores_titles_and_deactivates_removed_groups(fake_sb):
+    from telegram.error import ChatMigrated
+
+    GROUP_C, GROUP_D = -3003, -4004
+    fake_sb.tables["groups"] = [
+        {"chat_id": g, "title": None, "is_active": True} for g in (GROUP_A, GROUP_B, GROUP_C, GROUP_D)
+    ]
+
+    class ChatBot:
+        async def get_chat(self, chat_id):
+            if chat_id == GROUP_B:
+                raise Forbidden("Forbidden: bot was kicked from the group chat")
+            if chat_id == GROUP_C:
+                raise ChatMigrated(-1009999)
+            if chat_id == GROUP_D:
+                raise RuntimeError("timeout")
+            return SimpleNamespace(title="Circle A", username="circle_a")
+
+    run(jobs.refresh_groups(ChatBot()))
+
+    assert (group(fake_sb, GROUP_A)["title"], group(fake_sb, GROUP_A)["is_active"]) == ("Circle A", True)
+    assert group(fake_sb, GROUP_B)["is_active"] is False
+    # Migrated or temporarily unreachable groups are left alone.
+    assert group(fake_sb, GROUP_C)["is_active"] is True
+    assert group(fake_sb, GROUP_D)["is_active"] is True
