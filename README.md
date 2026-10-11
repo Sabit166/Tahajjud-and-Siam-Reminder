@@ -4,8 +4,8 @@ A Telegram bot that helps groups keep up their daily and weekly amal together. F
 
 - sends scheduled check-in polls ("Did you pray Tahajjud?"), at fixed times or relative to Dhaka prayer times,
 - records each member's answer, keeps streaks, and replies with the marks earned,
-- posts daily and weekly leaderboards,
-- sends a hadith at each prayer time and a Jumu'ah sunnah reminder,
+- posts a daily leaderboard (2 minutes after Maghrib) and a weekly leaderboard (Friday, 5 minutes after Maghrib),
+- sends a hadith at each prayer time,
 - gives each group's admins their own dashboard (a Telegram Mini App) to manage everything.
 
 One bot serves many groups. Each group has its own polls, answers, streaks, and leaderboards, and one group never sees another group's data.
@@ -51,43 +51,43 @@ Good to know:
 
 `/admin`, `/dashboard` and `/polls` do the same thing as `/setup`.
 
-### 3. A new group starts empty
+### 3. A new group starts with no polls
 
-A newly set-up group has **no polls**, and the bot sends it nothing until you add some. Use the dashboard to create the polls, reports, and reminders you want (see below).
+A newly set-up group has **no amal polls**. Use the dashboard to add the ones your group wants (see below).
+
+The **daily and weekly reports are automatic** for every group, so you don't set them up:
+
+| Report | When | Covers |
+|---|---|---|
+| Daily Report | Every day, 2 minutes after Maghrib | The last 24 hours |
+| Weekly Report | Friday, 5 minutes after Maghrib | The last 7 days |
+
+Reports only include **your group's members** and **your group's amal polls**. Until your group has polls and answers, the reports say that no responses were recorded.
 
 ### 4. Using the dashboard
 
-The top of the dashboard shows the live Dhaka time and today's prayer times. Below that is the list of everything scheduled for your group. Each item shows its type, schedule, today's calculated time, and marks.
+The top of the dashboard shows the live Dhaka time and today's prayer times. Below that is the list of your group's **amal polls**, each with its schedule, today's calculated time, and marks. The dashboard manages amal polls only; reports can't be edited.
 
-**Add an item.** Tap the add button and fill in:
+**Add a poll.** Tap the add button and fill in:
 
 | Field | Meaning |
 |---|---|
-| **Type** | **Amal poll**: a check-in poll members answer. **Report**: a leaderboard. **Reminder**: a text reminder. |
-| **Title** | For an amal poll, this is the question members see. For reports and reminders, see the note below. |
-| **Answer options** | Amal polls have exactly **two** options. The **first** means "done" and earns marks; the second means "missed". |
+| **Title** | The question members see, e.g. *Tahajjud Salat*. |
+| **Answer options** | Exactly **two** options. The **first** means "done" and earns marks; the second means "missed". |
 | **Time** | **Fixed**: a clock time in 24h format, e.g. `21:30`. **Prayer-relative**: Fajr, Sunrise, Dhuhr, Asr, Maghrib or Isha, plus an offset before or after, e.g. *30 min after Maghrib*. |
 | **Days** | The weekdays it runs on, e.g. Mon & Thu for Sawm or Friday for Surah Kahf. |
-| **Marks** | Points a member earns on the leaderboard for answering "done". Amal polls only. |
-| **Active** | Turn this off to pause an item without deleting it. |
+| **Marks** | Points a member earns on the leaderboard for answering "done". |
+| **Active** | Turn this off to pause a poll without deleting it. |
 
-> **Reports and reminders must use these exact titles.** The bot recognises them by title. Any other title is sent as an ordinary poll instead.
->
-> | Title | What it does |
-> |---|---|
-> | `Daily Report` | Daily leaderboard |
-> | `Weekly Report` | Weekly leaderboard |
-> | `Jumuah Reminder` | Yaum al-Jumu'ah sunnah reminder |
+**Edit, pause or delete:** tap a poll to edit it, use its switch to pause or resume it, or delete it. Changes are saved straight away and survive bot restarts. If a save fails, the dashboard shows an error. Your change has **not** been applied until it saves without one.
 
-**Edit, pause or delete:** tap an item to edit it, use its switch to pause or resume it, or delete it. Changes are saved straight away and survive bot restarts. If a save fails, the dashboard shows an error. Your change has **not** been applied until it saves without one.
-
-**⚡ Send now:** sends that poll, report, or reminder to your group immediately. Use it to test a new item.
+**⚡ Send now:** sends that poll to your group immediately. Use it to test a new poll.
 
 ### 5. How scoring works
 
 - **Answering a poll:** the first option ("done") records the amal as completed and earns that poll's marks. The second option records it as missed. Members can change their vote, and the latest answer for the day counts.
 - **Daily Report:** covers the 24 hours before the report is sent. Each member's score is the total marks of the polls they marked done, out of the maximum for that day's scheduled polls. Each line also shows their current streak.
-- **Weekly Report:** covers the last 7 days. For every amal it shows how many times each member completed it out of the number of scheduled days, with marks, ranked by total marks.
+- **Weekly Report:** covers the last 7 days. For every amal it shows how many times each member completed it out of the number of scheduled days, with marks, ranked by total marks. Answers to polls the group has since deleted aren't counted.
 - **Streaks:** count consecutive scheduled days a member completed an amal. Answering "missed" resets the streak to 0.
 
 ### 6. Automatic messages
@@ -95,6 +95,8 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 | Message | When |
 |---|---|
 | Check-in polls | At each poll's configured time and days. Polls close automatically after 24 hours. |
+| Daily Report | Every day, 2 minutes after Maghrib |
+| Weekly Report | Friday, 5 minutes after Maghrib |
 | Thank-you reply ("MashaAllah …") | After each answer. Deleted automatically after 10 seconds. |
 | Hadith reminder | At each of the five daily prayers |
 | Welcome message | When a new member joins |
@@ -121,8 +123,8 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 | *"Please use the dashboard link generated by /setup inside your Telegram group."* | The private-chat link was old or for another account. Send `/setup` in the group again. |
 | Dashboard shows *"Telegram Setup Required"* with *"Invalid, expired, or unauthorized setup token"* | The button was already used or is older than 10 minutes. Send `/setup` again. |
 | Dashboard shows *"Open this setup link from Telegram."* | You opened the link outside Telegram. Use the button in the bot chat. |
-| The group gets no polls | Check the dashboard: does the group have active polls scheduled for today's weekday? A new group starts empty. |
-| A "report" arrived as a poll | Its title isn't exactly `Daily Report`, `Weekly Report` or `Jumuah Reminder`. Delete it and create it again with the exact title. |
+| The group gets no polls | Check the dashboard: does the group have active polls scheduled for today's weekday? A new group starts with none. |
+| A report says no responses were recorded | The group has no amal polls yet, or nobody answered in that period. |
 | Answers aren't being counted | Make sure members answer polls the bot sent in the last 24 hours. Answers to closed or very old polls aren't recorded. If it continues, the operator should check the logs (see below). |
 
 ---
@@ -135,7 +137,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 A single Python process runs three things in one event loop:
 
 1. **Telegram bot** (python-telegram-bot, long polling): commands, poll answers, and group membership changes.
-2. **Scheduler** (JobQueue): every minute it loops over all active groups and sends any due polls, reports, and reminders. Every 5 minutes it sends prayer-time hadiths.
+2. **Scheduler** (JobQueue): every minute it loops over all active groups and sends any due amal polls, plus the built-in daily and weekly reports. Every 5 minutes it sends prayer-time hadiths.
 3. **Web server** (FastAPI + Uvicorn): the dashboard API and the Mini App frontend in `static/`.
 
 All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's Telegram chat ID (`group_chat_id`).
@@ -146,13 +148,13 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `config.py` | Environment variables, constants, logging |
 | `db.py` | Supabase access: groups, poll configs, active polls, responses, streaks, setup tokens, sessions |
 | `handlers.py` | Telegram handlers: `/setup`, private `/start`, poll answers, new members, errors |
-| `messaging.py` | Sends polls, reports, reminders, and hadiths. Contains the per-group schedule tick. |
+| `messaging.py` | Sends polls, reports, and hadiths. Contains the per-group schedule tick and the built-in report schedule (`BUILTIN_REPORTS`). |
 | `jobs.py` / `scheduler.py` | Recurring jobs that run the tick for each group |
 | `scheduling.py` | Closes polls and deletes reply messages after a delay |
 | `web_server.py` | Dashboard REST API and Mini App authentication |
 | `static/` | Dashboard frontend (`index.html`, `app.js`, `styles.css`) |
 | `prayer_times.py` / `hadith.py` | Aladhan prayer times (Dhaka) and HadithAPI client |
-| `practices.py` | Static text (welcome list, Jumu'ah sunnahs) |
+| `practices.py` | Static text (welcome message list) |
 | `supabase_schema.sql` | Database schema, including the multi-group migration |
 | `tests/` | Automated tests (no network needed) |
 
@@ -161,7 +163,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | Table | Holds | Key |
 |---|---|---|
 | `groups` | Every group the bot is in | `chat_id` |
-| `poll_configs` | Each group's polls, reports, and reminders | `(group_chat_id, id)` |
+| `poll_configs` | Each group's amal polls. Older report/reminder rows may remain; the bot ignores them. | `(group_chat_id, id)` |
 | `active_polls` | Telegram poll ID → poll config, for matching answers to polls | `(group_chat_id, poll_id)` |
 | `responses` | One answer per member, amal, and day | unique `(group_chat_id, user_id, practice, response_date)` |
 | `streaks` | Current and longest streak per member and amal | `(group_chat_id, user_id, practice)` |
@@ -222,7 +224,7 @@ The tests use in-memory fakes for Supabase and Telegram, so they need no network
 
 - the poll send → answer → record flow,
 - the scheduler,
-- daily and weekly reports,
+- daily and weekly reports (timing, every group, per-group content),
 - dashboard persistence,
 - Mini App authentication,
 - isolation between groups.

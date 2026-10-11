@@ -405,45 +405,6 @@ DEFAULT_POLL_CONFIGS: list[dict] = [
         "days_of_week": [0, 1, 2, 3, 4, 5, 6],
         "is_active": True,
     },
-    {
-        "id": "daily_report",
-        "title": "Daily Summary Report",
-        "poll_type": "report",
-        "poll_options": [],
-        "weight": 0,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "maghrib",
-        "prayer_offset_minutes": 2,
-        "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-        "is_active": True,
-    },
-    {
-        "id": "weekly_report",
-        "title": "Weekly Summary Report",
-        "poll_type": "report",
-        "poll_options": [],
-        "weight": 0,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "maghrib",
-        "prayer_offset_minutes": 5,
-        "days_of_week": [4],
-        "is_active": True,
-    },
-    {
-        "id": "jumuah_reminder",
-        "title": "Yaum al-Jumu'ah Sunnahs Reminder",
-        "poll_type": "reminder",
-        "poll_options": [],
-        "weight": 0,
-        "time_type": "prayer_relative",
-        "fixed_time": None,
-        "prayer_name": "maghrib",
-        "prayer_offset_minutes": 10,
-        "days_of_week": [3],
-        "is_active": True,
-    },
 ]
 
 DEFAULT_BINARY_OPTIONS = ["Alhamdulillah, done", "Incomplete/Missed"]
@@ -483,14 +444,16 @@ def get_all_poll_configs(active_only: bool = False, group_chat_id: int | None = 
             res = _sb().table("poll_configs").select("*").eq("group_chat_id", group_id).order("created_at").execute()
             cache.clear()
             for row in res.data or []:
-                cache[row["id"]] = row
+                # Only amal polls are configurable; legacy report/reminder
+                # rows are ignored (reports are built in, see messaging.py).
+                if row.get("poll_type", "amal_poll") == "amal_poll":
+                    cache[row["id"]] = row
         except Exception as exc:
             log.warning("Failed to refresh poll_configs from Supabase: %s", exc)
 
     items = list(cache.values())
     for item in items:
-        if item.get("poll_type", "amal_poll") == "amal_poll":
-            item["poll_options"] = _binary_options(item.get("poll_options"))
+        item["poll_options"] = _binary_options(item.get("poll_options"))
     if active_only:
         items = [i for i in items if i.get("is_active", True)]
     return items
@@ -515,7 +478,7 @@ def upsert_poll_config(data: dict, group_chat_id: int | None = None) -> dict:
         "group_chat_id": group_id,
         "id": poll_id,
         "title": str(data.get("title", "")),
-        "poll_type": str(data.get("poll_type", "amal_poll")),
+        "poll_type": "amal_poll",
         "poll_options": _binary_options(data.get("poll_options")),
         "weight": int(data.get("weight", 1)),
         "time_type": str(data.get("time_type", "prayer_relative")),
@@ -549,7 +512,11 @@ def delete_poll_config(poll_id: str, group_chat_id: int | None = None) -> bool:
     if not _SUPABASE_POLL_CONFIGS_AVAILABLE:
         raise RuntimeError("Supabase poll_configs is not available; poll was not deleted")
     try:
-        res = _sb().table("poll_configs").delete().eq("id", poll_id).eq("group_chat_id", group_id).execute()
+        res = (
+            _sb().table("poll_configs").delete()
+            .eq("id", poll_id).eq("group_chat_id", group_id).eq("poll_type", "amal_poll")
+            .execute()
+        )
     except Exception as exc:
         log.error("Could not delete poll_config %s from Supabase: %s", poll_id, exc)
         raise

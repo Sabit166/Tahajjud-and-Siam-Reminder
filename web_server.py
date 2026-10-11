@@ -131,10 +131,15 @@ verify_admin = require_group
 # ------------------------------------------------------------
 #  Poll Config Schemas
 # ------------------------------------------------------------
+# Ids of the former report/reminder rows, which may still exist in
+# poll_configs; new amal polls must not overwrite them.
+RESERVED_POLL_IDS = {"daily_report", "weekly_report", "jumuah_reminder", "nightly_amal"}
+
+
 class PollConfigPayload(BaseModel):
     id: Optional[str] = None
     title: str = Field(..., min_length=2, max_length=150)
-    poll_type: str = Field("amal_poll", pattern="^(amal_poll|report|reminder)$")
+    poll_type: str = Field("amal_poll", pattern="^amal_poll$")
     poll_options: list[str] = Field(default_factory=lambda: ["Alhamdulillah, done", "Incomplete/Missed"])
     weight: int = Field(1, ge=0, le=100)
     time_type: str = Field("prayer_relative", pattern="^(prayer_relative|fixed)$")
@@ -268,7 +273,7 @@ async def list_polls(_=Depends(require_group)):
 async def create_poll(payload: PollConfigPayload, _=Depends(verify_admin)):
     """Create a new poll or scheduled item."""
     data = payload.model_dump()
-    if data["poll_type"] == "amal_poll" and len(data["poll_options"]) != 2:
+    if len(data["poll_options"]) != 2:
         raise HTTPException(status_code=422, detail="Amal polls require exactly two answer options")
     poll_id = data.get("id")
     if not poll_id:
@@ -284,9 +289,10 @@ async def create_poll(payload: PollConfigPayload, _=Depends(verify_admin)):
         safe_slug = "".join(ch for ch in slug if ch.isalnum() or ch == "_").strip("_")
         poll_id = safe_slug or f"poll_{int(_dt.datetime.now().timestamp())}"
 
-    # Check for duplicate
+    # Avoid clashing with an existing poll, or with a legacy report or
+    # reminder row (hidden from the dashboard but still in the table).
     existing = get_poll_config(poll_id)
-    if existing:
+    if existing or poll_id in RESERVED_POLL_IDS:
         poll_id = f"{poll_id}_{int(_dt.datetime.now().timestamp())}"
 
     data["id"] = poll_id
@@ -303,7 +309,7 @@ async def update_poll(poll_id: str, payload: PollConfigPayload, _=Depends(verify
         raise HTTPException(status_code=404, detail=f"Poll '{poll_id}' not found")
 
     data = payload.model_dump()
-    if data["poll_type"] == "amal_poll" and len(data["poll_options"]) != 2:
+    if len(data["poll_options"]) != 2:
         raise HTTPException(status_code=422, detail="Amal polls require exactly two answer options")
     data["id"] = poll_id
     saved = upsert_poll_config(data)
@@ -335,33 +341,16 @@ async def toggle_poll_active(poll_id: str, _=Depends(verify_admin)):
 
 @app.post("/api/polls/{poll_id}/trigger")
 async def trigger_poll_now(poll_id: str, _=Depends(verify_admin)):
-    """Immediately dispatch a poll, report, or reminder to the Telegram group on demand."""
-    from messaging import (
-        send_checkin,
-        send_nightly_amal,
-        send_daily_report,
-        send_weekly_report,
-        send_jumuah_reminder,
-    )
-
-    bot = get_bot()
-    job_queue = _job_queue_instance
+    """Immediately send one of the group's amal polls to its Telegram group."""
+    from messaging import send_checkin
 
     conf = get_poll_config(poll_id)
-    title = conf.get("title", poll_id) if conf else poll_id
+    if not conf:
+        raise HTTPException(status_code=404, detail=f"Poll '{poll_id}' not found")
+    title = conf.get("title", poll_id)
 
     try:
-        if poll_id == "daily_report":
-            await send_daily_report(bot)
-        elif poll_id == "weekly_report":
-            await send_weekly_report(bot)
-        elif poll_id == "jumuah_reminder" or poll_id == "jumuah":
-            await send_jumuah_reminder(bot)
-        elif poll_id == "nightly_amal":
-            await send_nightly_amal(bot, job_queue)
-        else:
-            await send_checkin(bot, poll_id, job_queue)
-
+        await send_checkin(get_bot(), poll_id, _job_queue_instance)
         log.info("Manually triggered poll '%s' (%s) from Web UI.", title, poll_id)
         return {
             "success": True,

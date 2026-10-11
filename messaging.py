@@ -1,17 +1,15 @@
 """
-Message senders: check-in polls, nightly amal batch, daily and weekly
-reports, and the per-prayer hadith reminder.
+Message senders: check-in polls, daily and weekly reports, and the
+per-prayer hadith reminder.
 """
 
 from __future__ import annotations
 
-import asyncio
 import datetime as _dt
 
 from telegram import Bot
 
 from config import RESPONSE_WINDOW_HOURS, BD_TZ, log
-from practices import NIGHTLY_AMAL_OPTIONS, JUMUAH_SUNNAHS
 from db import save_active_poll, get_weekly_summary, get_daily_summary, get_daily_streaks, WEEKLY_MAX, current_group_id
 from scheduling import schedule_poll_close
 from hadith import fetch_hadith, format_hadith_message
@@ -50,72 +48,6 @@ async def send_checkin(bot: Bot, practice_key: str, job_queue=None):
         log.info(f"Check-in poll for {question} will stay open for {RESPONSE_WINDOW_HOURS} hour(s).")
         schedule_poll_close(job_queue, sent_message, question)
     log.info(f"Sent check-in poll: {question}")
-
-async def send_nightly_amal(bot: Bot, job_queue=None):
-    for key in NIGHTLY_AMAL_OPTIONS:
-        await send_checkin(bot, key, job_queue)
-        await asyncio.sleep(1)
-    log.info("Sent all 4 Nightly Amal polls.")
-
-
-def _format_jumuah_message() -> str:
-    """Build the decorated Yaum al-Jumu'ah reminder text."""
-    head = (
-        "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🌿 *Yaum al-Jumu'ah — Sunnahs & Recommended Acts* 🌿\n"
-        "*The Best Day the Sun Rises Upon — Yaum al-Jumu'ah*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "May Allah grant us the ability to act upon these sunnahs. "
-        "Ameen.\n\n"
-        "📜 *Sunnahs of Yaum al-Jumu'ah:*\n"
-    )
-    body_lines = []
-    for idx, (label, desc) in enumerate(JUMUAH_SUNNAHS, start=1):
-        body_lines.append(f"  {idx:>2}. {label} — _{desc}_")
-    body = "\n".join(body_lines)
-    tail = (
-        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📖 *\"Whoever perfects his ghusl on Friday, then goes to the masjid "
-        "early, walks (rather than rides), sits close to the imam, and "
-        "listens without crossing his legs or fidgeting — for every step, "
-        "he gets the reward of fasting and praying at night for one year.\"*\n"
-        "   — Tirmidhi\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📿 *اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ*\n"
-        "*(Allahumma salli 'ala Muhammadin wa 'ala ali Muhammad)*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-    return head + body + tail
-
-
-async def send_jumuah_reminder(bot: Bot):
-    """Send the Yaum al-Jumu'ah sunnah reminder to the group."""
-    text = _format_jumuah_message()
-    # Telegram message length cap is 4096 chars; this is well under that,
-    # but be safe and split if needed.
-    if len(text) <= 4096:
-        await bot.send_message(
-            chat_id=_chat_id(),
-            text=text,
-            parse_mode="Markdown",
-        )
-    else:
-        # Fallback: send first chunk, then the rest
-        first = text[:4000]
-        rest = text[4000:]
-        await bot.send_message(
-            chat_id=_chat_id(),
-            text=first,
-            parse_mode="Markdown",
-        )
-        if rest:
-            await bot.send_message(
-                chat_id=_chat_id(),
-                text=rest,
-                parse_mode="Markdown",
-            )
-    log.info("Sent Yaum al-Jumu'ah sunnah reminder.")
 
 
 def _report_label(practice: str) -> str:
@@ -180,7 +112,12 @@ def _chunk_blocks(title: str, header_separator: str, blocks: list[str]) -> list[
 
 
 async def send_weekly_report(bot: Bot):
-    rows = get_weekly_summary()
+    from db import get_all_poll_configs
+
+    # Only this group's own amal polls count; answers to polls the group
+    # has since deleted are left out (their weights no longer exist).
+    group_amals = {c["id"] for c in get_all_poll_configs()}
+    rows = [r for r in get_weekly_summary() if r[1] in group_amals]
     if not rows:
         await bot.send_message(
             chat_id=_chat_id(),
@@ -188,7 +125,7 @@ async def send_weekly_report(bot: Bot):
         )
         return
 
-    from db import get_practice_weight, get_weekly_max, get_all_poll_configs
+    from db import get_practice_weight, get_weekly_max
 
     # Group rows by user. Each amal (including each nightly sub-practice)
     # counts as its OWN mark — no grouping/collapsing.
@@ -342,8 +279,21 @@ _DISPATCHED_TODAY: set[tuple[int, str, _dt.date]] = set()
 _SCHEDULED_EVENTS: set[tuple[int, str, _dt.date]] = set()
 
 
+# Built-in reports sent to every active group. They are not configurable
+# from the dashboard: (event, prayer, offset minutes, weekdays).
+DAILY_REPORT_EVENT = "report:daily"
+WEEKLY_REPORT_EVENT = "report:weekly"
+BUILTIN_REPORTS = (
+    (DAILY_REPORT_EVENT, "maghrib", 2, (0, 1, 2, 3, 4, 5, 6)),
+    (WEEKLY_REPORT_EVENT, "maghrib", 5, (4,)),  # Friday
+)
+
+
 async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime):
-    """Dispatch one event after it occurs, at most once for its local date."""
+    """Dispatch one event after it occurs, at most once for its local date.
+
+    ``event`` is either a built-in report event or an amal poll config id.
+    """
     key = (current_group_id(), event, event_at.date())
     if key in _SCHEDULED_EVENTS:
         return
@@ -352,21 +302,17 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
     if 0 <= delta < 120:
         _SCHEDULED_EVENTS.add(key)
         bot = context.bot
-        if event == "daily_report":
+        if event == DAILY_REPORT_EVENT:
             await send_daily_report(bot, report_end=event_at)
-        elif event == "weekly_report":
+        elif event == WEEKLY_REPORT_EVENT:
             await send_weekly_report(bot)
-        elif event == "jumuah_reminder":
-            await send_jumuah_reminder(bot)
-        elif event == "nightly_amal":
-            await send_nightly_amal(bot, context.job_queue)
         else:
             await send_checkin(bot, event, context.job_queue)
         log.info("Dispatched scheduled event %s at %s.", event, event_at)
 
 
 async def _prayer_schedule_tick(context):
-    """Dispatch all dynamic prayer-relative and fixed-time practices, reports, and reminders."""
+    """Dispatch the group's amal polls and the built-in daily/weekly reports."""
     now = _dt.datetime.now(BD_TZ)
     today = now.date()
     try:
@@ -411,8 +357,11 @@ async def _prayer_schedule_tick(context):
             except Exception as exc:
                 log.warning("Error calculating prayer time for %s: %s", cid, exc)
 
-    # Only the group's own configs are scheduled; a group without any
-    # configs (e.g. freshly set up) receives nothing until it adds some.
+    # Reports go to every group, including ones without any amal polls.
+    for event, prayer, offset_mins, weekdays in BUILTIN_REPORTS:
+        if today.weekday() in weekdays:
+            events.append((event, at(prayer, _dt.timedelta(minutes=offset_mins))))
+
     for event, event_at in events:
         await _dispatch_scheduled_event(context, event, event_at)
 

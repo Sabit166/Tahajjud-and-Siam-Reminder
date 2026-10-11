@@ -150,7 +150,7 @@ def test_scheduler_sends_only_each_groups_own_configs(fake_sb, bot, due_time):
 
     run(jobs.prayer_schedule_job(ctx(bot)))
 
-    # Group B has no configs: nothing is sent to it (no single-group fallback).
+    # Group B has no amal polls, so no poll is sent to it.
     assert [p["chat_id"] for p in bot.sent_polls] == [GROUP_A]
     assert fake_sb.rows("active_polls")[0]["group_chat_id"] == GROUP_A
 

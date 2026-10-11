@@ -47,7 +47,7 @@ async def register_bot_commands(bot):
     from telegram import BotCommand, BotCommandScopeAllChatAdministrators
     try:
         await bot.set_my_commands(
-            [BotCommand("setup", "Open this group's poll & reminder dashboard")],
+            [BotCommand("setup", "Open this group's amal poll dashboard")],
             scope=BotCommandScopeAllChatAdministrators(),
         )
         log.info("Registered /setup in the command menu for group administrators.")

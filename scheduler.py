@@ -25,7 +25,7 @@ def setup_scheduler(app: Application):
     if job_queue is None:
         raise RuntimeError("JobQueue is not available.")
 
-    # Dynamic polls, reports, and reminders are evaluated every minute
+    # Amal polls and the built-in daily/weekly reports are evaluated every minute
     # by prayer_schedule_job based on poll_configs and prayer times.
 
     # Prayer-time hadith poll — every 5 minutes the bot re-fetches

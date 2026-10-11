@@ -119,10 +119,10 @@
       <div class="filter-tabs" id="filter-tabs">
         <button class="tab-chip active" data-filter="all">All (<span id="count-all">0</span>)</button>
         <button class="tab-chip" data-filter="amal_poll">Amal Polls (<span id="count-amal">0</span>)</button>
-        <button class="tab-chip" data-filter="reports">Reports & Sunnahs (<span id="count-reports">0</span>)</button>
         <button class="tab-chip" data-filter="active">Active (<span id="count-active">0</span>)</button>
         <button class="tab-chip" data-filter="paused">Paused (<span id="count-paused">0</span>)</button>
       </div>
+      <p class="form-hint">📊 Daily report is sent automatically 2 minutes after Maghrib, and the weekly report 5 minutes after Maghrib on Friday. Reports include only this group's members and amal polls.</p>
     </section>
 
     <!-- Polls List Container -->
@@ -186,16 +186,8 @@
             <input type="text" id="form-title" class="form-control" placeholder="e.g. Duha Salat (Chasht)" required maxlength="120">
           </div>
 
-          <!-- 2. Poll Type -->
-          <div class="form-group">
-            <label class="form-label">Poll Type</label>
-            <div class="segmented-control" id="form-type-segments">
-              <button type="button" class="segment-btn active" data-type="amal_poll">📿 Amal Poll</button>
-              <button type="button" class="segment-btn" data-type="report">📊 Report</button>
-              <button type="button" class="segment-btn" data-type="reminder">🌿 Reminder</button>
-            </div>
-            <input type="hidden" id="form-type" value="amal_poll">
-          </div>
+          <!-- 2. Poll Type: only amal polls are configurable; reports are built in -->
+          <input type="hidden" id="form-type" value="amal_poll">
 
           <!-- 3. Timing Configuration -->
           <div class="timing-box">

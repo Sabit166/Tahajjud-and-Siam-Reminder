@@ -65,7 +65,6 @@
   const formPollId = document.getElementById('form-poll-id');
   const formTitle = document.getElementById('form-title');
   const formType = document.getElementById('form-type');
-  const formTypeSegments = document.getElementById('form-type-segments');
 
   const formTimeMode = document.getElementById('form-time-mode');
   const formTimeModeSegments = document.getElementById('form-time-mode-segments');
@@ -282,13 +281,11 @@
   function updateFilterCounts() {
     const total = allPolls.length;
     const amals = allPolls.filter((p) => p.poll_type === 'amal_poll').length;
-    const reports = allPolls.filter((p) => p.poll_type !== 'amal_poll').length;
     const active = allPolls.filter((p) => p.is_active).length;
     const paused = total - active;
 
     document.getElementById('count-all').textContent = total;
     document.getElementById('count-amal').textContent = amals;
-    document.getElementById('count-reports').textContent = reports;
     document.getElementById('count-active').textContent = active;
     document.getElementById('count-paused').textContent = paused;
   }
@@ -301,8 +298,6 @@
     // Filter chip
     if (currentFilter === 'amal_poll') {
       filtered = filtered.filter((p) => p.poll_type === 'amal_poll');
-    } else if (currentFilter === 'reports') {
-      filtered = filtered.filter((p) => p.poll_type !== 'amal_poll');
     } else if (currentFilter === 'active') {
       filtered = filtered.filter((p) => p.is_active);
     } else if (currentFilter === 'paused') {
@@ -340,15 +335,8 @@
     card.dataset.id = poll.id;
 
     // Type label & badge color
-    let typeBadgeClass = 'badge-emerald';
-    let typeLabel = 'Amal Poll';
-    if (poll.poll_type === 'report') {
-      typeBadgeClass = 'badge-amber';
-      typeLabel = 'Report';
-    } else if (poll.poll_type === 'reminder') {
-      typeBadgeClass = 'badge-purple';
-      typeLabel = 'Sunnah Reminder';
-    }
+    const typeBadgeClass = 'badge-emerald';
+    const typeLabel = 'Amal Poll';
 
     // Schedule description & clock badge
     const isFixed = poll.time_type === 'fixed';
@@ -477,8 +465,7 @@
     modalTitle.textContent = 'Add New Poll';
     formTitle.value = '';
 
-    // Default: Amal Poll
-    setSegmentValue(formTypeSegments, 'amal_poll');
+    // Only amal polls are configurable
     formType.value = 'amal_poll';
 
     // Default: Prayer relative
@@ -519,9 +506,8 @@
     modalTitle.textContent = 'Edit Poll Schedule';
     formTitle.value = poll.title;
 
-    // Type
-    setSegmentValue(formTypeSegments, poll.poll_type || 'amal_poll');
-    formType.value = poll.poll_type || 'amal_poll';
+    // Type: only amal polls are configurable
+    formType.value = 'amal_poll';
     toggleTypeDependentSections(formType.value);
 
     // Timing Mode
@@ -577,16 +563,6 @@
   modalCancelBtn.addEventListener('click', closeModal);
   pollModal.addEventListener('click', (e) => {
     if (e.target === pollModal) closeModal();
-  });
-
-  // Type Segments Switch
-  formTypeSegments.addEventListener('click', (e) => {
-    const btn = e.target.closest('.segment-btn');
-    if (!btn) return;
-    triggerHaptic('light');
-    setSegmentValue(formTypeSegments, btn.dataset.type);
-    formType.value = btn.dataset.type;
-    toggleTypeDependentSections(formType.value);
   });
 
   function toggleTypeDependentSections(type) {
