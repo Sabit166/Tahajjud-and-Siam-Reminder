@@ -297,12 +297,8 @@ async def send_weekly_report(bot: Bot, report_day: _dt.date | None = None):
     for rank, (user_id, marks) in enumerate(sorted_users, start=1):
         block = f"{rank}. {names[user_id]} (Marks {marks}/{user_max_marks[user_id]})\n"
         for practice, completed in sorted(user_data[user_id].items()):
-            label = _report_label(practice)
-            max_n = get_weekly_max(practice)
-            weight = get_practice_weight(practice)
-            bar = "🟩" * completed + "⬜" * max(0, max_n - completed)
-            block += f"  -- {label}:\n"
-            block += f"  {bar} {completed}/{max_n} ({completed * weight}/{max_n * weight} marks)\n"
+            # (days performed/total days), e.g. "(4/7)".
+            block += f"  -- {_report_label(practice)}: ({completed}/{get_weekly_max(practice)})\n"
         block += "━━━━━━━━━━\n"
         blocks.append(block)
 

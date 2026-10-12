@@ -497,6 +497,23 @@ def _select_all(build_query) -> list[dict]:
         rows.extend(page)
 
 
+def delete_response(
+    user_id: int, practice: str, response_date: datetime.date, group_chat_id: int | None = None
+) -> bool:
+    """Remove a member's answer for one amal day (used when a vote is retracted)."""
+    try:
+        res = (
+            _sb().table("responses").delete()
+            .eq("group_chat_id", _group_id(group_chat_id)).eq("user_id", int(user_id))
+            .eq("practice", practice).eq("response_date", response_date.isoformat())
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:
+        log.error("Could not delete response of %s for %s: %s", user_id, practice, exc)
+        return False
+
+
 def get_weekly_summary(end_day: datetime.date | None = None):
     """Return [(user_id, full_name, practice, completed, total), ...] for
     the 7 amal days ending with ``end_day`` (default: today)."""
@@ -576,6 +593,12 @@ def get_daily_summary(
 # ============================================================
 
 
+# (group, user, practice) -> (streak date of the last vote, streak row before
+# it, or None if there was none). In memory only: a retraction after a
+# restart cannot roll the streak back (see undo_streak_for_retraction).
+_STREAK_UNDO: dict[tuple[int, int, str], tuple[str, Optional[dict]]] = {}
+
+
 def update_streak_for_response(
     user_id: int,
     practice: str,
@@ -594,7 +617,7 @@ def update_streak_for_response(
         existing = (
             _sb()
             .table("streaks")
-            .select("current_streak,longest_streak,last_done_date")
+            .select("current_streak,longest_streak,last_done_date,last_scheduled_date")
             .eq("user_id", user_id)
             .eq("practice", practice)
             .eq("group_chat_id", _group_id(group_chat_id))
@@ -602,6 +625,8 @@ def update_streak_for_response(
             .execute()
         )
         row = existing.data[0] if existing.data else None
+        # Remember the state before this vote so a retraction can undo it.
+        _STREAK_UNDO[(_group_id(group_chat_id), int(user_id), practice)] = (today, row)
 
         if did_it:
             if row is None:
@@ -655,6 +680,35 @@ def update_streak_for_response(
     except Exception as exc:
         log.error("Could not update streak: %s", exc)
         return 0
+
+
+def undo_streak_for_retraction(
+    user_id: int, practice: str, scheduled_date: str, group_chat_id: int | None = None
+) -> bool:
+    """Restore the streak to what it was before the vote on ``scheduled_date``.
+
+    Returns False when the pre-vote state is unknown (e.g. the bot restarted
+    between the vote and the retraction); the streak is then left as is.
+    """
+    group_id = _group_id(group_chat_id)
+    undo = _STREAK_UNDO.pop((group_id, int(user_id), practice), None)
+    if undo is None or undo[0] != scheduled_date:
+        return False
+    previous = undo[1]
+    try:
+        if previous is None:
+            (_sb().table("streaks").delete()
+             .eq("group_chat_id", group_id).eq("user_id", int(user_id)).eq("practice", practice)
+             .execute())
+        else:
+            _sb().table("streaks").upsert(
+                {"group_chat_id": group_id, "user_id": int(user_id), "practice": practice, **previous},
+                on_conflict="group_chat_id,user_id,practice",
+            ).execute()
+        return True
+    except Exception as exc:
+        log.error("Could not restore streak for %s/%s: %s", user_id, practice, exc)
+        return False
 
 
 def _is_consecutive_scheduled(

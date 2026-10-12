@@ -85,9 +85,9 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 
 ### 5. How scoring works
 
-- **Answering a poll:** the first option ("done") records the amal as completed and earns that poll's marks. The second option records it as missed. Members can change their vote while the poll is open; the latest answer counts.
+- **Answering a poll:** the first option ("done") records the amal as completed and earns that poll's marks. The second option records it as missed. Members can change their vote while the poll is open; the latest answer counts. **Retracting a vote removes it**, as if the member never answered, and their streak goes back to what it was.
 - **Daily Report:** covers one **amal day**, from the previous Maghrib to this Maghrib. It includes the polls sent during that day and the answers given to them. A poll sent after Maghrib belongs to the next day; a poll that runs only on certain weekdays (e.g. Sawm on Mon & Thu) appears only in the report of the day it was sent. Each member's score is the total marks of the polls they marked done, out of the day's maximum. Each line also shows their current streak.
-- **Weekly Report:** covers the last 7 days. For every amal it shows how many times each member completed it out of the number of scheduled days, with marks, ranked by total marks. Answers to polls the group has since deleted aren't counted.
+- **Weekly Report:** covers the last 7 amal days. For every amal it shows days performed out of scheduled days, e.g. `Morning Adhkar: (4/7)`, and members are ranked by total marks. Answers to polls the group has since deleted aren't counted.
 - **Streaks:** count consecutive scheduled days a member completed an amal. Answering "missed" resets the streak to 0.
 
 ### 6. Automatic messages
@@ -107,7 +107,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 ## Member guide
 
 - When a poll appears, tap your answer. The **first** option means you did it; the **second** means you missed it. Polls are not anonymous, because the bot needs to know who answered.
-- You can change your answer while the poll is open. Each poll closes at Maghrib + 2 minutes, when the daily report is posted, so answer before then.
+- You can change your answer while the poll is open; if you retract your vote, it no longer counts. Each poll closes at Maghrib + 2 minutes, when the daily report is posted, so answer before then.
 - The bot confirms with a short message that disappears after 10 seconds.
 - Check the daily and weekly reports to see your marks and streaks.
 

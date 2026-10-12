@@ -16,7 +16,9 @@ from telegram.ext import ContextTypes
 from config import BD_TZ, log
 from db import (
     save_response,
+    delete_response,
     update_streak_for_response,
+    undo_streak_for_retraction,
     set_current_group,
     register_group,
     issue_setup_token,
@@ -64,10 +66,6 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         p_info = get_practice_info(practice_key)
         label = p_info.get("label") or p_info.get("title", practice_key)
 
-        if not answer.option_ids:
-            log.info(f"User {full_name} retracted vote for {label}")
-            return
-
         # The answer belongs to the amal day the poll was sent in, and is
         # only accepted until that day ends (the poll is closed then; this
         # also covers polls whose close job was lost in a restart).
@@ -78,14 +76,26 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             log.info(f"Ignored late answer from {full_name} for {label} (amal day {amal_day} has ended)")
             return
 
-        did_it = 1 if 0 in answer.option_ids else 0
-        save_response(user.id, username, full_name, practice_key, did_it, response_date=amal_day)
-
         # Streaks follow the calendar day the poll was sent, matching the
         # poll's configured weekdays.
-        update_streak_for_response(
-            user.id, practice_key, sent_at.astimezone(BD_TZ).date().isoformat(), bool(did_it)
-        )
+        streak_date = sent_at.astimezone(BD_TZ).date().isoformat()
+
+        if not answer.option_ids:
+            # A retracted vote counts as no answer: remove it and roll the
+            # streak back to before the vote.
+            removed = delete_response(user.id, practice_key, amal_day)
+            restored = undo_streak_for_retraction(user.id, practice_key, streak_date)
+            log.info(
+                f"User {full_name} retracted vote for {label} (answer removed: {removed}, "
+                f"streak restored: {restored})"
+            )
+            if removed and not restored:
+                log.warning(f"Streak for {full_name}/{label} could not be rolled back (pre-vote state unknown).")
+            return
+
+        did_it = 1 if 0 in answer.option_ids else 0
+        save_response(user.id, username, full_name, practice_key, did_it, response_date=amal_day)
+        update_streak_for_response(user.id, practice_key, streak_date, bool(did_it))
 
         if did_it:
             points = get_practice_weight(practice_key)
