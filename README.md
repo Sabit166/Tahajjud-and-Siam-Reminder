@@ -4,7 +4,7 @@ A Telegram bot that helps groups keep up their daily and weekly amal together. F
 
 - sends scheduled check-in polls ("Did you pray Tahajjud?"), at fixed times or relative to Dhaka prayer times,
 - records each member's answer, keeps streaks, and replies with the marks earned,
-- posts a daily leaderboard (2 minutes after Maghrib) and a weekly leaderboard (Friday, 5 minutes after Maghrib),
+- posts a daily leaderboard (2 minutes after Maghrib), an inactivity callout of members who answered none of the day's polls (1 minute later), and a weekly leaderboard (Friday, 5 minutes after Maghrib),
 - sends a hadith at each prayer time,
 - gives each group's admins their own dashboard (a Telegram Mini App) to manage everything.
 
@@ -60,9 +60,18 @@ The **daily and weekly reports are automatic** for every group, so you don't set
 | Report | When | Covers |
 |---|---|---|
 | Daily Report | Every day, 2 minutes after Maghrib | That amal day: from the previous Maghrib to this Maghrib |
+| Inactivity Callout | Every day, 3 minutes after Maghrib (right after the daily report) | Members who answered **none** of that amal day's polls |
 | Weekly Report | Friday, 5 minutes after Maghrib | The last 7 days |
 
 Reports only include **your group's members** and **your group's amal polls**. Until your group has polls and answers, the reports say that no responses were recorded.
+
+About the **inactivity callout**:
+- It mentions each inactive member by name, so they get a notification.
+- Answering "missed" counts as taking part. Only members who answered nothing are listed.
+- Telegram doesn't let bots see a group's full member list. "Members" means everyone who has ever answered a poll in the group, plus the group's admins, and only people still in the group. Someone who has never answered any poll isn't known to the bot yet.
+- It's skipped on days when the group had no polls, or if that day's daily report wasn't sent (e.g. the bot was restarting at the time).
+
+Around Maghrib the messages always go out in this order, one at a time: Maghrib hadith (+0), Daily Report (+2), Inactivity Callout (+3), and on Fridays the Weekly Report (+5).
 
 ### 4. Using the dashboard
 
@@ -96,9 +105,10 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 |---|---|
 | Check-in polls | At each poll's configured time and days. Each poll closes when its amal day ends: at the next Maghrib + 2 minutes, when the daily report is sent. |
 | Daily Report | Every day, 2 minutes after Maghrib |
+| Inactivity Callout | Every day, 3 minutes after Maghrib |
 | Weekly Report | Friday, 5 minutes after Maghrib |
 | Thank-you reply ("MashaAllah …") | After each answer. Deleted automatically after 10 seconds. |
-| Hadith reminder | At each of the five daily prayers |
+| Hadith reminder | At the start of each of the five daily prayers (within a minute) |
 | Welcome message | When a new member joins. It lists your group's active amal polls (with their days, if not daily). |
 
 ---
@@ -137,7 +147,7 @@ The top of the dashboard shows the live Dhaka time and today's prayer times. Bel
 A single Python process runs three things in one event loop:
 
 1. **Telegram bot** (python-telegram-bot, long polling): commands, poll answers, and group membership changes.
-2. **Scheduler** (JobQueue): every minute it loops over all active groups and sends any due amal polls, plus the built-in daily and weekly reports. Every 5 minutes it sends prayer-time hadiths.
+2. **Scheduler** (JobQueue): every minute it loops over all active groups and sends whatever became due, in time order: amal polls, a hadith at each prayer, the daily report, the inactivity callout, and the weekly report.
 3. **Web server** (FastAPI + Uvicorn): the dashboard API and the Mini App frontend in `static/`.
 
 All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's Telegram chat ID (`group_chat_id`).
@@ -188,7 +198,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `PORT` / `WEB_PORT` | no | Web server port, default `8000` (Railway sets `PORT`) |
 | `WEB_HOST` | no | Bind address, default `0.0.0.0` |
 
-Fixed settings: polls close at the end of their amal day (Maghrib + 2 minutes, `messaging.DAY_END_GRACE`), the reports run at the times in `messaging.BUILTIN_REPORTS`, and reply messages are deleted after 10 seconds (`config.py`).
+Fixed settings: polls close at the end of their amal day (Maghrib + 2 minutes, `messaging.DAY_END_GRACE`), the reports and the callout run at the times in `messaging.BUILTIN_REPORTS`, and reply messages are deleted after 10 seconds (`config.py`).
 
 ### Supabase setup (one time)
 

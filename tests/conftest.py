@@ -176,8 +176,20 @@ class FakeBot:
 
     async def send_message(self, chat_id, text, **_k):
         self._next_msg += 1
-        self.sent_messages.append({"chat_id": chat_id, "text": text})
+        self.sent_messages.append({"chat_id": chat_id, "text": text, **_k})
         return SimpleNamespace(chat_id=chat_id, message_id=self._next_msg)
+
+    # Group membership, configurable per test: {user_id: (status, full_name, is_bot)}
+    members: dict = {}
+    admins: list = []
+
+    async def get_chat_member(self, chat_id, user_id):
+        status, name, is_bot = self.members.get(user_id, ("member", f"User {user_id}", False))
+        return SimpleNamespace(status=status, user=SimpleNamespace(id=user_id, full_name=name, is_bot=is_bot))
+
+    async def get_chat_administrators(self, chat_id):
+        return [SimpleNamespace(user=SimpleNamespace(id=uid, full_name=name, is_bot=is_bot))
+                for uid, name, is_bot in self.admins]
 
 
 GROUP_A = -1001
@@ -240,7 +252,12 @@ def default_prayer_times(monkeypatch):
         t = _dt.time(5, 0)
         return PrayerTimes(sunrise=t, fajr=t, dhuhr=t, asr=t, maghrib=DEFAULT_MAGHRIB, isha=t)
 
+    async def fake_hadith(*_a, **_k):
+        return {"text": "hadith", "narrator": "", "book": "", "number": ""}
+
     monkeypatch.setattr(messaging, "fetch_prayer_times", fake_fetch)
+    monkeypatch.setattr(messaging, "fetch_hadith", fake_hadith)
+    monkeypatch.setattr(messaging, "format_hadith_message", lambda prayer, h: f"Hadith for {prayer}")
     messaging._TIMINGS_CACHE.clear()
     yield
     messaging._TIMINGS_CACHE.clear()

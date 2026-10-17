@@ -111,7 +111,7 @@ def test_other_errors_do_not_deactivate_the_group(fake_sb, bot, due_poll):
     assert group(fake_sb, GROUP_B)["is_active"] is True
 
 
-def test_hadith_job_also_deactivates_removed_groups(fake_sb, bot, monkeypatch):
+def test_hadith_send_also_deactivates_removed_groups(fake_sb, bot, monkeypatch):
     async def send_hadith(b, prayer):
         if db.current_group_id() == GROUP_B:
             raise Forbidden("Forbidden: bot was kicked from the group chat")
@@ -123,15 +123,16 @@ def test_hadith_job_also_deactivates_removed_groups(fake_sb, bot, monkeypatch):
 
     monkeypatch.setattr(messaging, "send_prayer_hadith", send_hadith)
     monkeypatch.setattr(messaging, "fetch_prayer_times", all_prayers_now)
-    messaging._DISPATCHED_TODAY.clear()
+    messaging._SCHEDULED_EVENTS.clear()
     if dt.datetime.now(BD_TZ).hour == 0 and dt.datetime.now(BD_TZ).minute < 2:
         pytest.skip("too close to midnight")
+    db.init_db()
 
-    run(jobs.prayer_hadith_poll_job(ctx(bot)))
+    run(jobs.prayer_schedule_job(ctx(bot)))
 
     assert group(fake_sb, GROUP_B)["is_active"] is False
     assert group(fake_sb, GROUP_A)["is_active"] is True
-    messaging._DISPATCHED_TODAY.clear()
+    messaging._SCHEDULED_EVENTS.clear()
 
 
 def test_leave_update_deactivates_and_keeps_title(fake_sb, bot):

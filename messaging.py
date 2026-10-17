@@ -6,6 +6,7 @@ per-prayer hadith reminder.
 from __future__ import annotations
 
 import datetime as _dt
+import html
 
 from telegram import Bot
 
@@ -371,11 +372,76 @@ async def send_daily_report(bot: Bot, report_day: _dt.date | None = None):
     log.info("Sent daily report (%d message%s).", len(chunks), "s" if len(chunks) != 1 else "")
 
 
+_ACTIVE_STATUSES = ("member", "administrator", "creator", "restricted")
+
+
+async def _current_members(bot: Bot, chat_id: int, candidates: dict[int, str]) -> dict[int, str]:
+    """Keep only candidates still in the group (fresh display names), skip bots."""
+    current: dict[int, str] = {}
+    for user_id, name in candidates.items():
+        try:
+            member = await bot.get_chat_member(chat_id, user_id)
+        except Exception as exc:
+            log.info("Could not check member %s in group %s: %s", user_id, chat_id, exc)
+            continue
+        user = getattr(member, "user", None)
+        if member.status not in _ACTIVE_STATUSES or getattr(user, "is_bot", False):
+            continue
+        if member.status == "restricted" and not getattr(member, "is_member", True):
+            continue
+        current[user_id] = getattr(user, "full_name", None) or name
+    return current
+
+
+async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
+    """List members who answered none of the amal day's polls.
+
+    Sent right after the daily report. Members are everyone who has ever
+    answered a poll in the group plus its administrators, limited to people
+    still in the group. Answering "missed" counts as participating.
+    """
+    report_day = report_day or _dt.datetime.now(BD_TZ).date()
+    practices = await practices_for_amal_day(report_day)
+    if not practices:
+        return  # no polls that day, nothing to participate in
+    _, participated = get_daily_summary(report_day, practices)
+
+    from db import get_known_members
+    candidates = get_known_members()
+    try:
+        for admin in await bot.get_chat_administrators(_chat_id()):
+            if not admin.user.is_bot:
+                candidates.setdefault(admin.user.id, admin.user.full_name)
+    except Exception as exc:
+        log.info("Could not load administrators of group %s: %s", _chat_id(), exc)
+    candidates = {uid: name for uid, name in candidates.items() if uid not in participated}
+    inactive = await _current_members(bot, _chat_id(), candidates)
+
+    if not inactive:
+        text = "Inactivity Callout:\n\n━━━━━━━━━━\nAlhamdulillah, everyone took part in today's polls."
+        await bot.send_message(chat_id=_chat_id(), text=text)
+        log.info("Sent inactivity callout (nobody inactive).")
+        return
+
+    # Mention each member so they are notified.
+    lines = [
+        f'{i}. <a href="tg://user?id={uid}">{html.escape(name)}</a>\n'
+        for i, (uid, name) in enumerate(sorted(inactive.items(), key=lambda kv: kv[1].lower()), start=1)
+    ]
+    header = (
+        "These members did not take part in any of today's polls. "
+        "May Allah make it easy for us to return to our amal.\n\n"
+    )
+    chunks = _chunk_blocks("Inactivity Callout", "━━━━━━━━━━\n" + header, lines)
+    for chunk in chunks:
+        await bot.send_message(chat_id=_chat_id(), text=chunk, parse_mode="HTML")
+    log.info("Sent inactivity callout (%d member%s).", len(inactive), "s" if len(inactive) != 1 else "")
+
+
 async def send_prayer_hadith(bot: Bot, prayer_name: str):
     """Send one HadithAPI hadith for a given prayer time.
 
-    Called by ``prayer_hadith_poll_job`` (see ``scheduler.py``) when the
-    poll loop detects that ``prayer_name`` has just started.
+    Dispatched by the per-minute schedule tick at the prayer's start time.
     """
     try:
         hadith = await fetch_hadith()
@@ -388,27 +454,28 @@ async def send_prayer_hadith(bot: Bot, prayer_name: str):
 
 
 # --------------------------------------------------------------------
-#  Prayer-time polling loop
+#  Per-minute schedule
 # --------------------------------------------------------------------
 #
-# Aladhan's timingsByCity returns *today's* times, so they change day
-# to day and the JobQueue's run_daily (fixed clock-time) does not fit
-# this use case. Instead, ``setup_scheduler`` registers a single
-# repeating job that fires every 5 minutes; on each tick it checks
-# which of the 5 prayers has just started (within the last 5 min) and
-# dispatches one hadith reminder per prayer per day.
+# Prayer times change daily, so instead of fixed clock jobs a single job
+# runs every minute and, per group, sends whatever became due: amal polls,
+# a hadith at each prayer, and the built-in reports.
 
 _PRAYERS = ("fajr", "dhuhr", "asr", "maghrib", "isha")
-_DISPATCHED_TODAY: set[tuple[int, str, _dt.date]] = set()
 _SCHEDULED_EVENTS: set[tuple[int, str, _dt.date]] = set()
 
 
 # Built-in reports sent to every active group. They are not configurable
 # from the dashboard: (event, prayer, offset minutes, weekdays).
 DAILY_REPORT_EVENT = "report:daily"
+INACTIVITY_EVENT = "report:inactivity"
 WEEKLY_REPORT_EVENT = "report:weekly"
+HADITH_EVENT_PREFIX = "hadith:"
+# Around Maghrib every group gets, in this order and never overlapping:
+# hadith (+0), daily report (+2), inactivity callout (+3), weekly (+5, Fri).
 BUILTIN_REPORTS = (
     (DAILY_REPORT_EVENT, "maghrib", 2, (0, 1, 2, 3, 4, 5, 6)),
+    (INACTIVITY_EVENT, "maghrib", 3, (0, 1, 2, 3, 4, 5, 6)),
     (WEEKLY_REPORT_EVENT, "maghrib", 5, (4,)),  # Friday
 )
 
@@ -416,11 +483,14 @@ BUILTIN_REPORTS = (
 async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime):
     """Dispatch one event after it occurs, at most once for its local date.
 
-    ``event`` is either a built-in report event or an amal poll config id.
+    ``event`` is a built-in report or hadith event, or an amal poll config id.
     """
-    key = (current_group_id(), event, event_at.date())
+    group_id = current_group_id()
+    key = (group_id, event, event_at.date())
     if key in _SCHEDULED_EVENTS:
         return
+    if event == INACTIVITY_EVENT and (group_id, DAILY_REPORT_EVENT, event_at.date()) not in _SCHEDULED_EVENTS:
+        return  # the callout follows the daily report; skip it if that was not sent
     now = _dt.datetime.now(BD_TZ)
     delta = (now - event_at).total_seconds()
     if 0 <= delta < 120:
@@ -428,8 +498,12 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
         bot = context.bot
         if event == DAILY_REPORT_EVENT:
             await send_daily_report(bot, report_day=event_at.date())
+        elif event == INACTIVITY_EVENT:
+            await send_inactivity_callout(bot, report_day=event_at.date())
         elif event == WEEKLY_REPORT_EVENT:
             await send_weekly_report(bot, report_day=event_at.date())
+        elif event.startswith(HADITH_EVENT_PREFIX):
+            await send_prayer_hadith(bot, event[len(HADITH_EVENT_PREFIX):])
         else:
             await send_checkin(bot, event, context.job_queue)
         log.info("Dispatched scheduled event %s at %s.", event, event_at)
@@ -438,8 +512,8 @@ async def _dispatch_scheduled_event(context, event: str, event_at: _dt.datetime)
 async def fetch_today_timings():
     """Fetch today's (Dhaka) prayer times once for a whole job run.
 
-    Every group uses the same city, so the per-minute and per-5-minute
-    jobs fetch once and hand the result to each group's tick. Returns
+    Every group uses the same city, so the per-minute job fetches once and
+    hands the result to each group's tick. Returns
     None on failure; the job simply retries on its next run.
     """
     today = _dt.datetime.now(BD_TZ).date()
@@ -453,7 +527,7 @@ async def fetch_today_timings():
 
 
 async def _prayer_schedule_tick(context, timings=None):
-    """Dispatch the group's amal polls and the built-in daily/weekly reports."""
+    """Dispatch the group's amal polls, prayer hadiths, and built-in reports."""
     now = _dt.datetime.now(BD_TZ)
     today = now.date()
     if timings is None:
@@ -477,13 +551,18 @@ async def _prayer_schedule_tick(context, timings=None):
             if sent_at is not None:
                 events.append((conf["id"], sent_at))
 
-    # Reports go to every group, including ones without any amal polls.
-    # The daily report time equals amal_day_end(today), when polls close.
+    # A hadith at each prayer, and the reports, go to every group (also
+    # ones without amal polls). The daily report time equals
+    # amal_day_end(today), when polls close.
+    for prayer in _PRAYERS:
+        events.append((HADITH_EVENT_PREFIX + prayer, at(prayer)))
     for event, prayer, offset_mins, weekdays in BUILTIN_REPORTS:
         if today.weekday() in weekdays:
             events.append((event, at(prayer, _dt.timedelta(minutes=offset_mins))))
 
-    for event, event_at in events:
+    # Send in time order, one after another, so messages due in the same
+    # tick (e.g. after a late start) never interleave out of order.
+    for event, event_at in sorted(events, key=lambda e: e[1]):
         await _dispatch_scheduled_event(context, event, event_at)
 
     # Keep only recent dates in memory while allowing late-started jobs to fire.
@@ -491,31 +570,3 @@ async def _prayer_schedule_tick(context, timings=None):
     _SCHEDULED_EVENTS.difference_update(
         {key for key in _SCHEDULED_EVENTS if key[2] < cutoff}
     )
-
-
-async def _prayer_hadith_poll_tick(context, timings=None):
-    """Runs every 5 minutes; dispatches hadith reminders at prayer times."""
-    now = _dt.datetime.now(BD_TZ)
-    today = now.date()
-
-    # Reset dispatched tracker across days so the same prayer fires
-    # again tomorrow.
-    cutoff = today - _dt.timedelta(days=2)
-    _DISPATCHED_TODAY.difference_update(
-        {key for key in _DISPATCHED_TODAY if key[2] < cutoff}
-    )
-
-    if timings is None:
-        timings = await fetch_today_timings()
-        if timings is None:
-            return
-
-    for prayer in _PRAYERS:
-        prayer_at = dt_with_tz(getattr(timings, prayer), base=today)
-        delta = (now - prayer_at).total_seconds()
-        # 0 <= delta < 300 means the prayer started within the last 5 min
-        key = (current_group_id(), prayer, today)
-        if 0 <= delta < 300 and key not in _DISPATCHED_TODAY:
-            _DISPATCHED_TODAY.add(key)
-            log.info("Dispatching hadith reminder for %s at %s", prayer, now)
-            await send_prayer_hadith(context.bot, prayer)

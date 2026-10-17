@@ -48,10 +48,8 @@ def counted_fetch(monkeypatch):
 
     monkeypatch.setattr(messaging, "fetch_prayer_times", fake_fetch)
     messaging._SCHEDULED_EVENTS.clear()
-    messaging._DISPATCHED_TODAY.clear()
     yield calls
     messaging._SCHEDULED_EVENTS.clear()
-    messaging._DISPATCHED_TODAY.clear()
 
 
 def test_prayer_times_fetched_once_per_job_for_all_groups(fake_sb, bot, counted_fetch):
@@ -59,9 +57,9 @@ def test_prayer_times_fetched_once_per_job_for_all_groups(fake_sb, bot, counted_
     db.init_db()
 
     run(jobs.prayer_schedule_job(ctx(bot)))
-    run(jobs.prayer_hadith_poll_job(ctx(bot)))
+    run(jobs.prayer_schedule_job(ctx(bot)))
 
-    assert len(counted_fetch) == 2  # one per job run, not one per group (10 groups)
+    assert len(counted_fetch) == 2  # one per run, not one per group (10 groups)
     assert counted_fetch == [dt.datetime.now(BD_TZ).date()] * 2  # Dhaka date
 
 

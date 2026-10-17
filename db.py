@@ -514,6 +514,27 @@ def delete_response(
         return False
 
 
+def get_known_members(group_chat_id: int | None = None) -> dict[int, str]:
+    """{user_id: latest full_name} of everyone who has ever answered a poll
+    in the group. Telegram does not let bots list group members, so this
+    is the bot's view of the roster."""
+    group_id = _group_id(group_chat_id)
+    try:
+        rows = _select_all(lambda: (
+            _sb().table("responses")
+            .select("user_id,full_name")
+            .eq("group_chat_id", group_id)
+            .order("id")
+        ))
+    except Exception as exc:
+        log.error("Could not load known members of group %s: %s", group_id, exc)
+        return {}
+    members: dict[int, str] = {}
+    for row in rows:   # ordered by id, so the latest name wins
+        members[int(row["user_id"])] = row["full_name"]
+    return members
+
+
 def get_weekly_summary(end_day: datetime.date | None = None):
     """Return [(user_id, full_name, practice, completed, total), ...] for
     the 7 amal days ending with ``end_day`` (default: today)."""
