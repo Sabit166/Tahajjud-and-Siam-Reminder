@@ -139,3 +139,18 @@ def test_late_start_still_sends_in_order(group_a, bot, clock):
     clock(FRI, 3, seconds=40)   # bot (re)started late: daily and callout both due now
     run(jobs.prayer_schedule_job(ctx(bot)))
     assert [t.split(":")[0] for t in texts(bot)] == ["Daily Report", "Inactivity Callout"]
+
+
+def test_callout_includes_joined_members_who_never_answered(group_a, bot, clock):
+    group_a.tables["group_members"] = [
+        {"group_chat_id": GROUP_A, "user_id": 20, "full_name": "Newcomer", "username": ""},
+        {"group_chat_id": GROUP_A, "user_id": 1, "full_name": "Alice", "username": ""},  # answered
+    ]
+    bot.members = {**bot.members, 20: ("member", "Newcomer", False)}
+    clock(THU, 2)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    clock(THU, 3)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    callout = texts(bot)[-1]
+    assert '<a href="tg://user?id=20">Newcomer</a>' in callout
+    assert "Alice" not in callout

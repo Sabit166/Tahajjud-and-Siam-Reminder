@@ -15,8 +15,8 @@ def join(chat_id, *members):
     return SimpleNamespace(message=message)
 
 
-def member(name, is_bot=False):
-    return SimpleNamespace(full_name=name, username=None, is_bot=is_bot)
+def member(name, is_bot=False, user_id=None):
+    return SimpleNamespace(id=user_id or abs(hash(name)) % 10**6, full_name=name, username=None, is_bot=is_bot)
 
 
 def welcome(bot, chat_id, *members):
@@ -59,3 +59,26 @@ def test_welcome_escapes_names_and_titles(fake_sb, bot):
     [msg] = welcome(bot, GROUP_A, member("<b>Eve</b>"))
     assert "&lt;b&gt;Eve&lt;/b&gt;" in msg["text"]
     assert "Quran &lt;2 ayah&gt;" in msg["text"]
+
+
+# ------------------------------------------------------------
+#  Joining members are recorded
+# ------------------------------------------------------------
+
+def test_joining_members_are_recorded_but_not_bots(fake_sb, bot):
+    db.init_db()
+    welcome(bot, GROUP_A, member("Helper", is_bot=True, user_id=50), member("Bob", user_id=51))
+    assert fake_sb.rows("group_members") == [
+        {"group_chat_id": GROUP_A, "user_id": 51, "full_name": "Bob", "username": ""}
+    ]
+    db.set_current_group(GROUP_A)
+    assert db.get_known_members() == {51: "Bob"}
+
+
+def test_welcome_still_works_if_members_table_is_missing(fake_sb, bot):
+    fake_sb.fail_tables["group_members"] = "*"
+    db.init_db()
+    msgs = welcome(bot, GROUP_A, member("Bob", user_id=51))
+    assert len(msgs) == 1                      # welcome sent anyway
+    db.set_current_group(GROUP_A)
+    assert db.get_known_members() == {}        # falls back to poll answers only

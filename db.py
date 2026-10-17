@@ -514,11 +514,37 @@ def delete_response(
         return False
 
 
+def record_member(chat_id: int, user_id: int, full_name: str, username: str | None = None) -> None:
+    """Remember a member who joined the group (table group_members)."""
+    payload = {
+        "group_chat_id": int(chat_id), "user_id": int(user_id),
+        "full_name": full_name, "username": username or "",
+    }
+    try:
+        _sb().table("group_members").upsert(payload, on_conflict="group_chat_id,user_id").execute()
+        log.info("Recorded member %s (%s) in group %s.", user_id, full_name, chat_id)
+    except Exception as exc:
+        log.warning("Could not record member %s in group %s (is group_members created?): %s",
+                    user_id, chat_id, exc)
+
+
 def get_known_members(group_chat_id: int | None = None) -> dict[int, str]:
-    """{user_id: latest full_name} of everyone who has ever answered a poll
-    in the group. Telegram does not let bots list group members, so this
-    is the bot's view of the roster."""
+    """{user_id: full_name} of everyone the bot knows in the group: members
+    recorded when they joined, plus everyone who has ever answered a poll.
+    Telegram does not let bots list group members, so this is the bot's
+    view of the roster."""
     group_id = _group_id(group_chat_id)
+    members: dict[int, str] = {}
+    try:
+        for row in _select_all(lambda: (
+            _sb().table("group_members")
+            .select("user_id,full_name")
+            .eq("group_chat_id", group_id)
+            .order("user_id")
+        )):
+            members[int(row["user_id"])] = row["full_name"]
+    except Exception as exc:
+        log.warning("Could not load recorded members of group %s: %s", group_id, exc)
     try:
         rows = _select_all(lambda: (
             _sb().table("responses")
@@ -527,9 +553,8 @@ def get_known_members(group_chat_id: int | None = None) -> dict[int, str]:
             .order("id")
         ))
     except Exception as exc:
-        log.error("Could not load known members of group %s: %s", group_id, exc)
-        return {}
-    members: dict[int, str] = {}
+        log.error("Could not load poll participants of group %s: %s", group_id, exc)
+        return members
     for row in rows:   # ordered by id, so the latest name wins
         members[int(row["user_id"])] = row["full_name"]
     return members

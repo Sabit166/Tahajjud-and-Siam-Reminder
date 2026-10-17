@@ -23,6 +23,7 @@ from db import (
     register_group,
     issue_setup_token,
     get_setup_token,
+    record_member,
 )
 from scheduling import schedule_message_delete
 
@@ -342,6 +343,11 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in message.new_chat_members:
         if member.is_bot:
             continue
+
+        # Remember the member so the inactivity callout knows about them
+        # even before they answer their first poll.
+        record_member(message.chat_id, member.id, member.full_name or member.username or str(member.id),
+                      member.username)
 
         display_name = html.escape(member.full_name or member.username or "brother")
         welcome_text = (

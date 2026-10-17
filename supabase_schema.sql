@@ -145,3 +145,17 @@ create index if not exists web_sessions_expiry_idx on public.web_sessions(expire
 -- Additive and nullable: existing rows and older code are unaffected.
 -- ============================================================
 alter table public.active_polls add column if not exists message_id bigint;
+
+-- ============================================================
+-- 2026-10-17: members recorded when they join a group, so the daily
+-- inactivity callout also covers people who never answered a poll.
+-- Additive: older code ignores it.
+-- ============================================================
+create table if not exists public.group_members (
+    group_chat_id bigint      not null,
+    user_id       bigint      not null,
+    full_name     text        not null,
+    username      text,
+    joined_at     timestamptz not null default now(),
+    primary key (group_chat_id, user_id)
+);

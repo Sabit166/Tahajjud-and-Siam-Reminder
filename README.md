@@ -68,7 +68,7 @@ Reports only include **your group's members** and **your group's amal polls**. U
 About the **inactivity callout**:
 - It mentions each inactive member by name, so they get a notification.
 - Answering "missed" counts as taking part. Only members who answered nothing are listed.
-- Telegram doesn't let bots see a group's full member list. "Members" means everyone who has ever answered a poll in the group, plus the group's admins, and only people still in the group. Someone who has never answered any poll isn't known to the bot yet.
+- Telegram doesn't let bots see a group's full member list. "Members" means everyone the bot knows in the group: people recorded when they joined (from when this feature was added), everyone who has ever answered a poll, and the group's admins. Only people still in the group are listed. Someone who joined before the feature and has never answered a poll isn't known to the bot yet.
 - It's skipped on days when the group had no polls, or if that day's daily report wasn't sent (e.g. the bot was restarting at the time).
 
 Around Maghrib the messages always go out in this order, one at a time: Maghrib hadith (+0), Daily Report (+2), Inactivity Callout (+3), and on Fridays the Weekly Report (+5).
@@ -176,6 +176,7 @@ All data lives in **Supabase** (PostgreSQL). Every table is keyed by the group's
 | `active_polls` | Telegram poll ID → poll config, send time, and message ID, for matching answers and closing polls | `(group_chat_id, poll_id)` |
 | `responses` | One answer per member, amal, and day | unique `(group_chat_id, user_id, practice, response_date)` |
 | `streaks` | Current and longest streak per member and amal | `(group_chat_id, user_id, practice)` |
+| `group_members` | Members recorded when they join, for the inactivity callout | `(group_chat_id, user_id)` |
 | `setup_tokens` | One-time `/setup` links (10 min) | `token` |
 | `web_sessions` | Dashboard sessions (60 min) | `token` |
 
