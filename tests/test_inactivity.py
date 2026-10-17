@@ -166,3 +166,50 @@ def test_callout_forgets_recorded_members_who_left(group_a, bot, clock):
     run(jobs.prayer_schedule_job(ctx(bot)))
     assert "Dave" not in texts(bot)[-1]
     assert group_a.rows("group_members") == []
+
+
+# ------------------------------------------------------------
+#  Inactivity streak
+# ------------------------------------------------------------
+
+def d(day):
+    return THU - dt.timedelta(days=day)
+
+
+def test_streak_counts_consecutive_polled_days_without_an_answer():
+    group_days = {d(0), d(1), d(2), d(4), d(5)}          # no polls 3 days ago
+    answered = {d(5)}                                     # last answer 5 days ago
+    assert messaging.inactivity_streak(THU, answered, group_days) == (4, False)   # d0,d1,d2,d4
+
+
+def test_streak_is_one_when_they_answered_yesterday():
+    assert messaging.inactivity_streak(THU, {d(1)}, {d(0), d(1)}) == (1, False)
+
+
+def test_streak_stops_at_the_join_day():
+    group_days = {d(i) for i in range(10)}
+    assert messaging.inactivity_streak(THU, set(), group_days, joined_day=d(2)) == (3, False)
+
+
+def test_streak_reports_when_the_lookback_limit_is_reached():
+    group_days = {d(i) for i in range(100)}
+    assert messaging.inactivity_streak(THU, set(), group_days) == (messaging.INACTIVITY_LOOKBACK_DAYS, True)
+
+
+def test_callout_shows_streaks_longest_first(group_a, bot, clock):
+    group_a.tables["group_members"] = [
+        {"group_chat_id": GROUP_A, "user_id": 20, "full_name": "Newcomer", "username": "",
+         "joined_at": "2026-10-15T09:00:00+06:00"},             # joined Thursday
+    ]
+    bot.members = {**bot.members, 20: ("member", "Newcomer", False)}
+    clock(THU, 2)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    clock(THU, 3)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    callout = texts(bot)[-1]
+    # Imam (admin) never answered: Thursday and Wednesday (the group's only
+    # poll days in the data) -> "2+ days"; Carol answered Wednesday -> 1 day.
+    assert '1. <a href="tg://user?id=6">Imam</a> (2+ days)' in callout
+    assert '<a href="tg://user?id=3">Carol Khan</a> (1 day)' in callout
+    assert '<a href="tg://user?id=20">Newcomer</a> (1 day)' in callout
+    assert callout.index("Imam") < callout.index("Carol Khan")

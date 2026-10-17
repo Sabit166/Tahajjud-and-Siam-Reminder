@@ -68,7 +68,7 @@ The **daily and weekly reports are automatic** for every group, so you don't set
 Reports only include **your group's members** and **your group's amal polls**. Until your group has polls and answers, the reports say that no responses were recorded.
 
 About the **inactivity callout**:
-- It mentions each inactive member by name, so they get a notification.
+- It mentions each inactive member by name, so they get a notification, and shows their **inactive streak**: how many poll days in a row they haven't answered anything, e.g. `Rafin (3 days)`. The longest streaks are listed first. Days without polls are skipped. The count stops at the member's last answer or the day they joined, and anything over 60 days shows as `60+ days`.
 - Answering "missed" counts as taking part. Only members who answered nothing are listed.
 - Telegram doesn't let bots see a group's full member list. "Members" means everyone the bot knows in the group: people recorded when they joined (from when this feature was added; removed again when they leave, while their past answers are kept for the reports), everyone who has ever answered a poll, and the group's admins. Only people still in the group are listed. Someone who joined before the feature and has never answered a poll isn't known to the bot yet.
 - It's skipped on days when the group had no polls, or if that day's daily report wasn't sent (e.g. the bot was restarting at the time).

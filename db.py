@@ -539,6 +539,46 @@ def remove_member(chat_id: int, user_id: int) -> None:
         log.warning("Could not remove member %s from group %s records: %s", user_id, chat_id, exc)
 
 
+def get_recent_activity(
+    since_day: datetime.date, group_chat_id: int | None = None
+) -> tuple[dict[int, set[datetime.date]], set[datetime.date], dict[int, datetime.date]]:
+    """Activity since ``since_day`` for inactivity streaks.
+
+    Returns (days each member answered, days anyone in the group answered,
+    day each recorded member joined).
+    """
+    group_id = _group_id(group_chat_id)
+    answered: dict[int, set[datetime.date]] = {}
+    group_days: set[datetime.date] = set()
+    joined: dict[int, datetime.date] = {}
+    try:
+        for row in _select_all(lambda: (
+            _sb().table("responses")
+            .select("user_id,response_date")
+            .eq("group_chat_id", group_id)
+            .gte("response_date", since_day.isoformat())
+            .order("id")
+        )):
+            day = datetime.date.fromisoformat(row["response_date"])
+            answered.setdefault(int(row["user_id"]), set()).add(day)
+            group_days.add(day)
+    except Exception as exc:
+        log.error("Could not load recent activity of group %s: %s", group_id, exc)
+    try:
+        for row in _select_all(lambda: (
+            _sb().table("group_members")
+            .select("user_id,joined_at")
+            .eq("group_chat_id", group_id)
+            .order("user_id")
+        )):
+            if row.get("joined_at"):
+                joined_at = datetime.datetime.fromisoformat(str(row["joined_at"]).replace("Z", "+00:00"))
+                joined[int(row["user_id"])] = joined_at.astimezone(BD_TZ).date()
+    except Exception as exc:
+        log.warning("Could not load join dates of group %s: %s", group_id, exc)
+    return answered, group_days, joined
+
+
 def get_known_members(group_chat_id: int | None = None) -> dict[int, str]:
     """{user_id: full_name} of everyone the bot knows in the group: members
     recorded when they joined, plus everyone who has ever answered a poll.

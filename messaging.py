@@ -400,6 +400,33 @@ async def _current_members(bot: Bot, chat_id: int, candidates: dict[int, str]) -
     return current
 
 
+INACTIVITY_LOOKBACK_DAYS = 60
+
+
+def inactivity_streak(
+    report_day: _dt.date,
+    answered_days: set[_dt.date],
+    group_days: set[_dt.date],
+    joined_day: _dt.date | None = None,
+) -> tuple[int, bool]:
+    """Consecutive amal days, ending with ``report_day``, without any answer.
+
+    Days on which nobody in the group answered (no polls) are skipped: they
+    neither break nor extend the streak. Counting stops at the member's last
+    answer or the day they joined. Returns (days, reached lookback limit).
+    """
+    days = 0
+    for back in range(INACTIVITY_LOOKBACK_DAYS):
+        day = report_day - _dt.timedelta(days=back)
+        if joined_day is not None and day < joined_day:
+            return days, False
+        if day in answered_days:
+            return days, False
+        if day == report_day or day in group_days:
+            days += 1
+    return days, True
+
+
 async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
     """List members who answered none of the amal day's polls.
 
@@ -430,11 +457,19 @@ async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
         log.info("Sent inactivity callout (nobody inactive).")
         return
 
-    # Mention each member so they are notified.
-    lines = [
-        f'{i}. <a href="tg://user?id={uid}">{html.escape(name)}</a>\n'
-        for i, (uid, name) in enumerate(sorted(inactive.items(), key=lambda kv: kv[1].lower()), start=1)
-    ]
+    # Longest inactive streak first; mention each member so they are notified.
+    from db import get_recent_activity
+    answered, group_days, joined = get_recent_activity(report_day - _dt.timedelta(days=INACTIVITY_LOOKBACK_DAYS))
+    streaks = {
+        uid: inactivity_streak(report_day, answered.get(uid, set()), group_days, joined.get(uid))
+        for uid in inactive
+    }
+    ordered = sorted(inactive.items(), key=lambda kv: (-streaks[kv[0]][0], kv[1].lower()))
+    lines = []
+    for i, (uid, name) in enumerate(ordered, start=1):
+        days, capped = streaks[uid]
+        label = f"{days}{'+' if capped else ''} day{'s' if days != 1 or capped else ''}"
+        lines.append(f'{i}. <a href="tg://user?id={uid}">{html.escape(name)}</a> ({label})\n')
     header = (
         "These members did not take part in any of today's polls. "
         "May Allah make it easy for us to return to our amal.\n\n"
