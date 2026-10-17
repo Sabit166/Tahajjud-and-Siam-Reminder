@@ -82,3 +82,39 @@ def test_welcome_still_works_if_members_table_is_missing(fake_sb, bot):
     assert len(msgs) == 1                      # welcome sent anyway
     db.set_current_group(GROUP_A)
     assert db.get_known_members() == {}        # falls back to poll answers only
+
+
+# ------------------------------------------------------------
+#  Leaving members are forgotten
+# ------------------------------------------------------------
+
+def leave(bot, chat_id, user_id):
+    bot.id = 999
+    update = SimpleNamespace(message=SimpleNamespace(
+        chat_id=chat_id, left_chat_member=SimpleNamespace(id=user_id)))
+    asyncio.run(handlers.handle_left_member(update, SimpleNamespace(bot=bot)))
+
+
+def test_leaving_member_is_removed_but_their_answers_stay(fake_sb, bot):
+    fake_sb.tables["group_members"] = [
+        {"group_chat_id": GROUP_A, "user_id": 51, "full_name": "Bob", "username": ""},
+        {"group_chat_id": GROUP_B, "user_id": 51, "full_name": "Bob", "username": ""},  # other group
+        {"group_chat_id": GROUP_A, "user_id": 52, "full_name": "Carol", "username": ""},
+    ]
+    fake_sb.tables["responses"] = [{"group_chat_id": GROUP_A, "user_id": 51, "full_name": "Bob",
+                                    "practice": "q", "did_it": True, "response_date": "2026-10-16"}]
+    leave(bot, GROUP_A, 51)
+    assert [(r["group_chat_id"], r["user_id"]) for r in fake_sb.rows("group_members")] == [
+        (GROUP_B, 51), (GROUP_A, 52)]
+    assert len(fake_sb.rows("responses")) == 1
+
+
+def test_bot_leaving_is_ignored_here(fake_sb, bot):
+    fake_sb.tables["group_members"] = [{"group_chat_id": GROUP_A, "user_id": 999, "full_name": "x", "username": ""}]
+    leave(bot, GROUP_A, 999)
+    assert len(fake_sb.rows("group_members")) == 1
+
+
+def test_leave_without_members_table_does_not_fail(fake_sb, bot):
+    fake_sb.fail_tables["group_members"] = "*"
+    leave(bot, GROUP_A, 51)   # logs a warning, no exception

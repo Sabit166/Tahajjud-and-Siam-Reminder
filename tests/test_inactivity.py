@@ -154,3 +154,15 @@ def test_callout_includes_joined_members_who_never_answered(group_a, bot, clock)
     callout = texts(bot)[-1]
     assert '<a href="tg://user?id=20">Newcomer</a>' in callout
     assert "Alice" not in callout
+
+
+def test_callout_forgets_recorded_members_who_left(group_a, bot, clock):
+    group_a.tables["group_members"] = [
+        {"group_chat_id": GROUP_A, "user_id": 4, "full_name": "Dave", "username": ""},  # status: left
+    ]
+    clock(THU, 2)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    clock(THU, 3)
+    run(jobs.prayer_schedule_job(ctx(bot)))
+    assert "Dave" not in texts(bot)[-1]
+    assert group_a.rows("group_members") == []

@@ -24,6 +24,7 @@ from db import (
     issue_setup_token,
     get_setup_token,
     record_member,
+    remove_member,
 )
 from scheduling import schedule_message_delete
 
@@ -331,6 +332,15 @@ def _group_amal_lines(chat_id: int) -> list[str]:
             title += " (" + ", ".join(_WEEKDAY_NAMES[d] for d in days if 0 <= d < 7) + ")"
         lines.append(f"• {title}\n")
     return lines
+
+
+async def handle_left_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forget a member who left or was removed from the group."""
+    message = update.message
+    member = message.left_chat_member if message else None
+    if member is None or member.id == context.bot.id:
+        return  # the bot itself leaving is handled by handle_my_chat_member
+    remove_member(message.chat_id, member.id)
 
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):

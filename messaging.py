@@ -376,7 +376,11 @@ _ACTIVE_STATUSES = ("member", "administrator", "creator", "restricted")
 
 
 async def _current_members(bot: Bot, chat_id: int, candidates: dict[int, str]) -> dict[int, str]:
-    """Keep only candidates still in the group (fresh display names), skip bots."""
+    """Keep only candidates still in the group (fresh display names), skip bots.
+
+    Recorded members found to have left are forgotten (backup for a missed
+    "left the group" update)."""
+    from db import remove_member
     current: dict[int, str] = {}
     for user_id, name in candidates.items():
         try:
@@ -385,6 +389,9 @@ async def _current_members(bot: Bot, chat_id: int, candidates: dict[int, str]) -
             log.info("Could not check member %s in group %s: %s", user_id, chat_id, exc)
             continue
         user = getattr(member, "user", None)
+        if member.status in ("left", "kicked"):
+            remove_member(chat_id, user_id)
+            continue
         if member.status not in _ACTIVE_STATUSES or getattr(user, "is_bot", False):
             continue
         if member.status == "restricted" and not getattr(member, "is_member", True):

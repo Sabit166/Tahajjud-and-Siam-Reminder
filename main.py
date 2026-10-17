@@ -29,6 +29,7 @@ from db import init_db, cleanup_old_active_polls
 from handlers import (
     handle_poll_answer,
     handle_new_member,
+    handle_left_member,
     handle_admin_command,
     handle_start,
     handle_my_chat_member,
@@ -76,6 +77,7 @@ def main():
     app.add_handler(CommandHandler(["admin", "setup", "dashboard", "polls"], handle_admin_command))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_member))
     app.add_handler(ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_error_handler(handle_error)
 

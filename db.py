@@ -528,6 +528,17 @@ def record_member(chat_id: int, user_id: int, full_name: str, username: str | No
                     user_id, chat_id, exc)
 
 
+def remove_member(chat_id: int, user_id: int) -> None:
+    """Forget a member who left or was removed. Their past poll answers stay
+    (reports and streak history need them)."""
+    try:
+        (_sb().table("group_members").delete()
+         .eq("group_chat_id", int(chat_id)).eq("user_id", int(user_id)).execute())
+        log.info("Removed member %s from group %s records.", user_id, chat_id)
+    except Exception as exc:
+        log.warning("Could not remove member %s from group %s records: %s", user_id, chat_id, exc)
+
+
 def get_known_members(group_chat_id: int | None = None) -> dict[int, str]:
     """{user_id: full_name} of everyone the bot knows in the group: members
     recorded when they joined, plus everyone who has ever answered a poll.
