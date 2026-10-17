@@ -401,6 +401,8 @@ async def _current_members(bot: Bot, chat_id: int, candidates: dict[int, str]) -
 
 
 INACTIVITY_LOOKBACK_DAYS = 60
+INACTIVITY_WARN_DAYS = 27     # callout warns from this many days
+INACTIVITY_REMOVE_DAYS = 30   # members (not admins) are kicked at this many days
 
 
 def inactivity_streak(
@@ -442,8 +444,10 @@ async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
 
     from db import get_known_members
     candidates = get_known_members()
+    admin_ids: set[int] = set()
     try:
         for admin in await bot.get_chat_administrators(_chat_id()):
+            admin_ids.add(admin.user.id)
             if not admin.user.is_bot:
                 candidates.setdefault(admin.user.id, admin.user.full_name)
     except Exception as exc:
@@ -465,11 +469,18 @@ async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
         for uid in inactive
     }
     ordered = sorted(inactive.items(), key=lambda kv: (-streaks[kv[0]][0], kv[1].lower()))
+    # Members (never admins) at the removal threshold are kicked after the callout.
+    to_remove = [uid for uid, _ in ordered
+                 if streaks[uid][0] >= INACTIVITY_REMOVE_DAYS and uid not in admin_ids]
     lines = []
     for i, (uid, name) in enumerate(ordered, start=1):
         days, capped = streaks[uid]
         label = f"{days}{'+' if capped else ''} day{'s' if days != 1 or capped else ''}"
-        lines.append(f'{i}. <a href="tg://user?id={uid}">{html.escape(name)}</a> ({label})\n')
+        if uid in to_remove:
+            label += ", removed"
+        elif INACTIVITY_WARN_DAYS <= days < INACTIVITY_REMOVE_DAYS and uid not in admin_ids:
+            label += f", will be removed at {INACTIVITY_REMOVE_DAYS}"
+        lines.append(f'{i}. {_mention(uid, name)} ({label})\n')
     header = (
         "These members did not take part in any of today's polls. "
         "May Allah make it easy for us to return to our amal.\n\n"
@@ -478,6 +489,55 @@ async def send_inactivity_callout(bot: Bot, report_day: _dt.date | None = None):
     for chunk in chunks:
         await bot.send_message(chat_id=_chat_id(), text=chunk, parse_mode="HTML")
     log.info("Sent inactivity callout (%d member%s).", len(inactive), "s" if len(inactive) != 1 else "")
+
+    if to_remove:
+        await _remove_inactive_members(bot, {uid: inactive[uid] for uid in to_remove})
+
+
+def _mention(user_id: int, name: str) -> str:
+    return f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+
+
+async def _remove_inactive_members(bot: Bot, members: dict[int, str]) -> None:
+    """Kick members inactive for INACTIVITY_REMOVE_DAYS (they can rejoin).
+
+    A kick is a ban immediately lifted. If the bot lacks the "Ban users"
+    admin right, nobody is removed and the admins are asked to grant it.
+    """
+    from telegram.error import BadRequest, Forbidden
+    from db import remove_member
+
+    chat_id = _chat_id()
+    removed: dict[int, str] = {}
+    for user_id, name in members.items():
+        try:
+            await bot.ban_chat_member(chat_id, user_id)
+            await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+        except (BadRequest, Forbidden) as exc:
+            if "rights" in str(exc).lower() or "admin" in str(exc).lower() or isinstance(exc, Forbidden):
+                log.warning("Cannot remove inactive members in group %s: %s", chat_id, exc)
+                names = ", ".join(_mention(uid, n) for uid, n in members.items() if uid not in removed)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(f"Admins: these members have been inactive for {INACTIVITY_REMOVE_DAYS} days, "
+                          f"but I can't remove them: {names}.\n"
+                          "Please make me an admin with the \"Ban users\" permission."),
+                    parse_mode="HTML",
+                )
+                break
+            log.warning("Could not remove %s from group %s: %s", user_id, chat_id, exc)
+            continue
+        remove_member(chat_id, user_id)
+        removed[user_id] = name
+        log.info("Removed inactive member %s (%s) from group %s.", user_id, name, chat_id)
+    if removed:
+        names = "\n".join(f"• {_mention(uid, n)}" for uid, n in removed.items())
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(f"Removed for {INACTIVITY_REMOVE_DAYS} days of inactivity:\n{names}\n\n"
+                  "They are welcome to rejoin with an invite link, InshaAllah."),
+            parse_mode="HTML",
+        )
 
 
 async def send_prayer_hadith(bot: Bot, prayer_name: str):

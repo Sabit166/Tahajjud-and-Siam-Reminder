@@ -27,7 +27,7 @@ One bot serves many groups. Each group has its own polls, answers, streaks, and 
 ### 1. Add the bot to your group
 
 1. Open the group in Telegram, go to **Add members**, search for **@Muaddhin_Ilal_Furqan_Bot** (shown as *Muezzin*), and add it. Or open [t.me/Muaddhin_Ilal_Furqan_Bot](https://t.me/Muaddhin_Ilal_Furqan_Bot), tap the bot's name, and choose **Add to Group**.
-2. Make sure members can see and vote on polls. The bot doesn't need admin rights.
+2. Make sure members can see and vote on polls. To let the bot remove members after 30 days of inactivity (see below), make it an **admin with the "Ban users" permission**. Everything else works without admin rights.
 
 The bot registers the group automatically when it's added, and **immediately posts the setup message** with the **Open private chat with bot** button. Any admin can continue from step 2 below by tapping it. When someone taps it and presses Start, the bot checks that they are an administrator of the group; anyone else is refused.
 
@@ -72,6 +72,13 @@ About the **inactivity callout**:
 - Answering "missed" counts as taking part. Only members who answered nothing are listed.
 - Telegram doesn't let bots see a group's full member list. "Members" means everyone the bot knows in the group: people recorded when they joined (from when this feature was added; removed again when they leave, while their past answers are kept for the reports), everyone who has ever answered a poll, and the group's admins. Only people still in the group are listed. Someone who joined before the feature and has never answered a poll isn't known to the bot yet.
 - It's skipped on days when the group had no polls, or if that day's daily report wasn't sent (e.g. the bot was restarting at the time).
+
+**Removal after 30 days of inactivity** (every group):
+- From **27** inactive days, the callout warns: `(28 days, will be removed at 30)`.
+- At **30** days, the member is listed as `(30 days, removed)` and **kicked**: removed from the group but not banned, so they can rejoin with an invite link. The bot posts who was removed. Their past answers are kept.
+- **Admins and the group owner are never removed or warned.**
+- Days when nobody in the group answered anything (e.g. the bot was down) don't count towards the 30.
+- **The bot must be an admin with the "Ban users" permission** for this. Without it, nobody is removed, and the bot posts a message asking the admins to grant it.
 
 Around Maghrib the messages always go out in this order, one at a time: Maghrib hadith (+0), Daily Report (+2), Inactivity Callout (+3), and on Fridays the Weekly Report (+5).
 
