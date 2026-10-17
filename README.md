@@ -10,6 +10,8 @@ A Telegram bot that helps groups keep up their daily and weekly amal together. F
 
 One bot serves many groups. Each group has its own polls, answers, streaks, and leaderboards, and one group never sees another group's data.
 
+**Add it to your group:** the bot is **Muezzin**, username [**@Muaddhin_Ilal_Furqan_Bot**](https://t.me/Muaddhin_Ilal_Furqan_Bot). See [step 1 of the admin guide](#admin-guide) below.
+
 **Contents**
 
 - [Admin guide: setting up and managing a group](#admin-guide)
@@ -24,7 +26,7 @@ One bot serves many groups. Each group has its own polls, answers, streaks, and 
 
 ### 1. Add the bot to your group
 
-1. Open the group in Telegram, go to **Add members**, and add the bot.
+1. Open the group in Telegram, go to **Add members**, search for **@Muaddhin_Ilal_Furqan_Bot** (shown as *Muezzin*), and add it. Or open [t.me/Muaddhin_Ilal_Furqan_Bot](https://t.me/Muaddhin_Ilal_Furqan_Bot), tap the bot's name, and choose **Add to Group**.
 2. Make sure members can see and vote on polls. The bot doesn't need admin rights.
 
 The bot registers the group automatically when it's added, and **immediately posts the setup message** with the **Open private chat with bot** button. Any admin can continue from step 2 below by tapping it. When someone taps it and presses Start, the bot checks that they are an administrator of the group; anyone else is refused.
